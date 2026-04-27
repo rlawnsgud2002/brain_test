@@ -282,6 +282,44 @@ CFG.electrodes.forEach((a, i) => {
   });
 });
 
+// ── BRAIN REGIONS ─────────────────────────────────────────
+function rLine(x0, x1, ny, R=1.015, col=0x4488ff, op=0.4, n=60) {
+  const pts = [];
+  for(let i=0;i<=n;i++) pts.push(toSphere(x0+(x1-x0)*(i/n), ny, R));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op})));
+}
+function rVLine(nx, y0, y1, R=1.015, col=0x4488ff, op=0.4, n=60) {
+  const pts = [];
+  for(let i=0;i<=n;i++) pts.push(toSphere(nx, y0+(y1-y0)*(i/n), R));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op})));
+}
+// 전두엽/중앙 경계
+rLine(-0.88, 0.88, -0.10, 1.015, 0x44aaff, 0.45);
+// 중앙/두정엽 경계
+rLine(-0.88, 0.88,  0.20, 1.015, 0x44aaff, 0.35);
+// 두정엽/후두엽 경계
+rLine(-0.70, 0.70,  0.58, 1.015, 0x44aaff, 0.35);
+// 측두엽 좌우 경계
+rVLine(-0.68, -0.28, 0.42, 1.015, 0x44aaff, 0.30);
+rVLine( 0.68, -0.28, 0.42, 1.015, 0x44aaff, 0.30);
+// 중앙 시상면 (좌우 반구 구분)
+rVLine(0, -0.90, 0.90, 1.015, 0x334488, 0.20);
+
+// 영역 라벨
+function rLabel(text, nx, ny) {
+  const sp = makeLabel(text, '#3a5a8a');
+  sp.scale.set(0.42, 0.20, 1);
+  sp.position.copy(toSphere(nx, ny, 1.22));
+  scene.add(sp);
+}
+rLabel('FRONTAL',    0,   -0.48);
+rLabel('PARIETAL',   0,    0.36);
+rLabel('OCCIPITAL',  0,    0.76);
+rLabel('L.TEMP',    -0.90, 0.14);
+rLabel('R.TEMP',     0.90, 0.14);
+
 // ── ORBIT CONTROLS (manual) ──────────────────────────────
 let drag = false, lastMouse = {x:0,y:0};
 let rotX = 0.3, rotY = 0;
