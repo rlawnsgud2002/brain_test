@@ -75,6 +75,20 @@
       <div class="colorbar"></div>
       <div class="colorbar-labels"><span>Low</span><span>Mid</span><span>High</span></div>
     </div>
+    <div class="panel-box">
+      <div class="panel-title">HEMISPHERE BALANCE</div>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+        <span class="metric-label" style="width:14px">L</span>
+        <div class="bar-bg" style="flex:1"><div class="bar-fill" id="lHemiBar" style="background:#4488ff;width:50%"></div></div>
+        <span class="metric-val" id="lHemiVal" style="color:#4488ff;width:32px;text-align:right">50</span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <span class="metric-label" style="width:14px">R</span>
+        <div class="bar-bg" style="flex:1"><div class="bar-fill" id="rHemiBar" style="background:#ff6644;width:50%"></div></div>
+        <span class="metric-val" id="rHemiVal" style="color:#ff6644;width:32px;text-align:right">50</span>
+      </div>
+      <div style="text-align:center;margin-top:6px;font-size:10px;color:#6480cc" id="hemiStatus">BALANCED</div>
+    </div>
   </div>
 
   <!-- CENTER -->
@@ -496,6 +510,17 @@ function updateUI(avg) {
     document.getElementById('b'+k.charAt(0).toUpperCase()+k.slice(1)).textContent = bands[k].toFixed(1);
     document.getElementById('b'+k.charAt(0).toUpperCase()+k.slice(1)+'Bar').style.width = bands[k]+'%';
   });
+
+  // Hemisphere balance (L: AF3,F7,F3,FC5,T7,P7,O1 / R: AF4,F8,F4,FC6,T8,P8,O2)
+  const lIdx = [0,2,3,6,8,10,12], rIdx = [1,4,5,7,9,11,13];
+  const lAvg = lIdx.reduce((s,i)=>s+CFG.vals[i],0)/lIdx.length;
+  const rAvg = rIdx.reduce((s,i)=>s+CFG.vals[i],0)/rIdx.length;
+  document.getElementById('lHemiBar').style.width = lAvg+'%';
+  document.getElementById('rHemiBar').style.width = rAvg+'%';
+  document.getElementById('lHemiVal').textContent = lAvg.toFixed(0);
+  document.getElementById('rHemiVal').textContent = rAvg.toFixed(0);
+  const diff = Math.abs(lAvg - rAvg);
+  document.getElementById('hemiStatus').textContent = diff < 8 ? 'BALANCED' : lAvg > rAvg ? 'L DOMINANT' : 'R DOMINANT';
 
   // Electrode list
   const el = document.getElementById('electrodeList');
