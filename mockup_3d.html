@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EEG 3D Glass Brain</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #050810; color: #e0e8ff; font-family: 'Courier New', monospace; overflow: hidden; }
+    #canvas3d { position: fixed; top: 0; left: 0; }
+    .ui { position: fixed; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; display: flex; }
+    .left-panel { width: 220px; padding: 16px; display: flex; flex-direction: column; gap: 12px; pointer-events: all; }
+    .center { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; padding-bottom: 20px; pointer-events: none; }
+    .right-panel { width: 220px; padding: 16px; display: flex; flex-direction: column; gap: 12px; pointer-events: all; }
+    .panel-box { background: rgba(5,8,16,0.75); border: 1px solid rgba(100,140,255,0.3); border-radius: 8px; padding: 12px; backdrop-filter: blur(8px); }
+    .panel-title { font-size: 10px; color: #6480cc; letter-spacing: 2px; margin-bottom: 8px; }
+    .big-num { font-size: 48px; font-weight: bold; text-align: center; line-height: 1; }
+    .sub-label { font-size: 10px; text-align: center; color: #6480cc; margin-top: 4px; letter-spacing: 1px; }
+    .state-badge { text-align: center; font-size: 13px; font-weight: bold; padding: 6px; border-radius: 4px; margin-top: 8px; }
+    .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .metric-label { font-size: 11px; color: #6480cc; }
+    .metric-val { font-size: 13px; font-weight: bold; }
+    .bar-bg { background: rgba(100,140,255,0.15); border-radius: 3px; height: 4px; margin-top: 2px; }
+    .bar-fill { height: 4px; border-radius: 3px; transition: width 0.3s; }
+    canvas.mini { width: 100%; height: 70px; display: block; }
+    .colorbar { display: flex; height: 8px; border-radius: 4px; margin: 4px 0; background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff8000, #ff0000); }
+    .colorbar-labels { display: flex; justify-content: space-between; font-size: 9px; color: #6480cc; }
+    button { background: rgba(100,140,255,0.2); color: #e0e8ff; border: 1px solid rgba(100,140,255,0.4); padding: 7px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; width: 100%; margin-top: 4px; transition: background 0.2s; }
+    button:hover { background: rgba(100,140,255,0.4); }
+    .slider-row { margin-bottom: 8px; }
+    .slider-row label { font-size: 10px; color: #6480cc; display: flex; justify-content: space-between; }
+    input[type=range] { width: 100%; margin-top: 3px; accent-color: #6480cc; }
+    select { width: 100%; background: rgba(5,8,16,0.9); color: #e0e8ff; border: 1px solid rgba(100,140,255,0.3); padding: 5px; border-radius: 4px; font-size: 11px; }
+    .hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: rgba(100,140,255,0.5); pointer-events: none; }
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); justify-content: center; align-items: center; z-index: 100; }
+    .modal.show { display: flex; }
+    .modal-box { background: #0a0e1a; border: 1px solid rgba(100,140,255,0.4); border-radius: 10px; padding: 24px; width: 260px; }
+    .modal-box h3 { font-size: 13px; color: #6480cc; margin-bottom: 12px; letter-spacing: 2px; }
+    .modal-box input { width: 100%; background: rgba(100,140,255,0.1); border: 1px solid rgba(100,140,255,0.3); color: #e0e8ff; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
+    .modal-btns { display: flex; gap: 8px; }
+    .modal-btns button { flex: 1; }
+    #vAlert { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(100,140,255,0.15); border: 2px solid #6480cc; border-radius: 12px; padding: 20px 40px; font-size: 18px; font-weight: bold; color: #a0c0ff; display: none; pointer-events: none; text-align: center; backdrop-filter: blur(10px); }
+  </style>
+</head>
+<body>
+<canvas id="canvas3d"></canvas>
+
+<div class="ui">
+  <!-- LEFT -->
+  <div class="left-panel">
+    <div class="panel-box">
+      <div class="panel-title">CONCENTRATION</div>
+      <div class="big-num" id="concNum" style="color:#a0c0ff">50%</div>
+      <div class="sub-label">BETA / ALPHA RATIO: <span id="baRatio">1.00</span></div>
+      <div class="state-badge" id="stateBadge" style="background:rgba(100,140,255,0.2);color:#a0c0ff">IDLE</div>
+    </div>
+    <div class="panel-box">
+      <div class="panel-title">FREQUENCY BANDS</div>
+      <div class="metric-row"><span class="metric-label">Delta (0-4Hz)</span><span class="metric-val" id="bDelta" style="color:#6480cc">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bDeltaBar" style="background:#6480cc;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Theta (4-8Hz)</span><span class="metric-val" id="bTheta" style="color:#8060cc">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bThetaBar" style="background:#8060cc;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Alpha (8-12Hz)</span><span class="metric-val" id="bAlpha" style="color:#00cc88">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bAlphaBar" style="background:#00cc88;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Beta (12-30Hz)</span><span class="metric-val" id="bBeta" style="color:#ffcc00">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bBetaBar" style="background:#ffcc00;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Gamma (30+Hz)</span><span class="metric-val" id="bGamma" style="color:#ff6040">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bGammaBar" style="background:#ff6040;width:50%"></div></div>
+    </div>
+    <div class="panel-box">
+      <div class="panel-title">HEATMAP SCALE</div>
+      <div class="colorbar"></div>
+      <div class="colorbar-labels"><span>Low</span><span>Mid</span><span>High</span></div>
+    </div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="center">
+    <div class="panel-box" style="width:360px">
+      <div class="panel-title">CONCENTRATION TIMELINE · V-PATTERN DETECTION</div>
+      <canvas class="mini" id="graphCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="right-panel">
+    <div class="panel-box">
+      <div class="panel-title">ELECTRODE ACTIVITY</div>
+      <div id="electrodeList" style="font-size:10px;line-height:1.8;max-height:160px;overflow-y:auto"></div>
+    </div>
+    <div class="panel-box">
+      <button onclick="showAdmin()">🔐 ADMIN PANEL</button>
+      <div id="adminUI" style="display:none;margin-top:8px">
+        <div class="slider-row">
+          <label>Th_low <span id="tlv">30</span>%</label>
+          <input type="range" id="thLow" min="0" max="50" value="30" oninput="updateCfg()">
+        </div>
+        <div class="slider-row">
+          <label>Th_high <span id="thv">70</span>%</label>
+          <input type="range" id="thHigh" min="50" max="100" value="70" oninput="updateCfg()">
+        </div>
+        <div class="slider-row">
+          <label>Δt <span id="dtv">3</span>s</label>
+          <input type="range" id="dtSlider" min="1" max="10" value="3" oninput="updateCfg()">
+        </div>
+        <div class="slider-row">
+          <label>Manual <span id="mv">50</span>%</label>
+          <input type="range" id="manSlider" min="0" max="100" value="50" oninput="updateManual()">
+        </div>
+        <select id="srcSel">
+          <option value="sim">SIMULATION</option>
+          <option value="deap">DEAP DATASET</option>
+          <option value="device">EMOTIV EPOC X</option>
+        </select>
+        <button onclick="forceV()">⚡ FORCE V-PATTERN</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="hint">🖱 Drag to rotate · Scroll to zoom</div>
+<div id="vAlert">⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#6480cc">FOCUS → CONTROL TRANSFER</span></div>
+
+<!-- ADMIN MODAL -->
+<div class="modal" id="adminModal">
+  <div class="modal-box">
+    <h3>ADMIN ACCESS</h3>
+    <input type="password" id="pwInput" placeholder="Password" onkeydown="if(event.key==='Enter')checkPw()">
+    <div class="modal-btns">
+      <button onclick="checkPw()">ENTER</button>
+      <button onclick="closeModal()" style="background:rgba(255,60,60,0.15)">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ── CONFIG ────────────────────────────────────────────────
+const CFG = {
+  pw: 'admin', thLow: 30, thHigh: 70, dt: 3,
+  manual: false, manVal: 50,
+  electrodes: [
+    {n:'AF3',x:-0.26,y:-0.60},{n:'AF4',x:0.26,y:-0.60},
+    {n:'F7', x:-0.72,y:-0.48},{n:'F3', x:-0.38,y:-0.32},
+    {n:'F4', x:0.38, y:-0.32},{n:'F8', x:0.72, y:-0.48},
+    {n:'FC5',x:-0.59,y:-0.13},{n:'FC6',x:0.59, y:-0.13},
+    {n:'T7', x:-0.85,y:0.05}, {n:'T8', x:0.85, y:0.05},
+    {n:'P7', x:-0.66,y:0.50}, {n:'P8', x:0.66, y:0.50},
+    {n:'O1', x:-0.26,y:0.72}, {n:'O2', x:0.26, y:0.72}
+  ],
+  vals: new Float32Array(14).fill(50),
+  history: [],
+  vLow: false, vLowTime: 0
+};
+
+// ── JET COLORMAP ──────────────────────────────────────────
+function jet(t) {
+  t = Math.max(0, Math.min(1, t));
+  const r = Math.max(0, Math.min(1, 1.5 - Math.abs(4*t - 3)));
+  const g = Math.max(0, Math.min(1, 1.5 - Math.abs(4*t - 2)));
+  const b = Math.max(0, Math.min(1, 1.5 - Math.abs(4*t - 1)));
+  return {r, g, b};
+}
+
+// ── 2D → 3D SPHERE ───────────────────────────────────────
+function toSphere(nx, ny, R) {
+  const r2d = Math.sqrt(nx*nx + ny*ny);
+  const phi = r2d * Math.PI * 0.5;
+  const theta = Math.atan2(ny, nx);
+  return new THREE.Vector3(
+    R * Math.sin(phi) * Math.cos(theta),
+    R * Math.cos(phi),
+    R * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+// ── THREE.JS SETUP ───────────────────────────────────────
+const canvas = document.getElementById('canvas3d');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+camera.position.set(0, 0.5, 3.5);
+
+// Lights
+scene.add(new THREE.AmbientLight(0x334488, 1.2));
+const ptLight = new THREE.PointLight(0x6688ff, 1.5, 10);
+ptLight.position.set(2, 2, 2);
+scene.add(ptLight);
+
+// Glass brain sphere
+const brainGeo = new THREE.SphereGeometry(1, 64, 64);
+const brainMat = new THREE.MeshPhongMaterial({
+  color: 0x2244aa, transparent: true, opacity: 0.18,
+  wireframe: false, side: THREE.DoubleSide,
+  shininess: 120, specular: 0x8899ff
+});
+const brain = new THREE.Mesh(brainGeo, brainMat);
+scene.add(brain);
+
+// Wireframe overlay
+const wireMat = new THREE.MeshBasicMaterial({ color: 0x334477, wireframe: true, transparent: true, opacity: 0.08 });
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.01, 24, 24), wireMat));
+
+// Equator ring
+const ringGeo = new THREE.TorusGeometry(1.01, 0.003, 8, 80);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0x4466aa, transparent: true, opacity: 0.4 });
+scene.add(new THREE.Mesh(ringGeo, ringMat));
+
+// Electrode meshes
+const eGeos = CFG.electrodes.map(() => new THREE.SphereGeometry(0.045, 12, 12));
+const eMats = CFG.electrodes.map(() => new THREE.MeshStandardMaterial({
+  color: 0x4488ff, emissive: 0x2244aa, emissiveIntensity: 0.6,
+  roughness: 0.3, metalness: 0.5
+}));
+const eMeshes = CFG.electrodes.map((e, i) => {
+  const m = new THREE.Mesh(eGeos[i], eMats[i]);
+  m.position.copy(toSphere(e.x, e.y, 1.02));
+  scene.add(m);
+  return m;
+});
+
+// Glow sprites (billboard)
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0, 'rgba(100,160,255,0.9)');
+  g.addColorStop(0.3, 'rgba(60,100,255,0.4)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+})();
+
+const glowMeshes = CFG.electrodes.map((e, i) => {
+  const mat = new THREE.SpriteMaterial({ map: glowTex, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(0.3, 0.3, 1);
+  sp.position.copy(toSphere(e.x, e.y, 1.02));
+  scene.add(sp);
+  return sp;
+});
+
+// Connection lines between electrodes
+const lineMat = new THREE.LineBasicMaterial({ color: 0x2244aa, transparent: true, opacity: 0.15 });
+CFG.electrodes.forEach((a, i) => {
+  CFG.electrodes.forEach((b, j) => {
+    if (j <= i) return;
+    const d = Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
+    if (d > 0.45) return;
+    const pts = [toSphere(a.x,a.y,1.0), toSphere(b.x,b.y,1.0)];
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+  });
+});
+
+// ── ORBIT CONTROLS (manual) ──────────────────────────────
+let drag = false, lastMouse = {x:0,y:0};
+let rotX = 0.3, rotY = 0;
+let zoom = 3.5;
+canvas.addEventListener('mousedown', e => { drag = true; lastMouse = {x:e.clientX, y:e.clientY}; });
+window.addEventListener('mouseup', () => drag = false);
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  rotY += (e.clientX - lastMouse.x) * 0.007;
+  rotX += (e.clientY - lastMouse.y) * 0.007;
+  rotX = Math.max(-1.4, Math.min(1.4, rotX));
+  lastMouse = {x:e.clientX, y:e.clientY};
+});
+canvas.addEventListener('wheel', e => { zoom = Math.max(1.8, Math.min(6, zoom + e.deltaY * 0.005)); });
+
+// Touch support
+let lastTouch = null;
+canvas.addEventListener('touchstart', e => { lastTouch = e.touches[0]; });
+canvas.addEventListener('touchmove', e => {
+  if (!lastTouch) return;
+  rotY += (e.touches[0].clientX - lastTouch.clientX) * 0.007;
+  rotX += (e.touches[0].clientY - lastTouch.clientY) * 0.007;
+  lastTouch = e.touches[0];
+  e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchend', () => lastTouch = null);
+
+// ── RESIZE ───────────────────────────────────────────────
+function resize() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── EEG SIMULATION ───────────────────────────────────────
+let bands = {delta:50, theta:40, alpha:50, beta:50, gamma:30};
+let vPhase = null; // null | {step, total}
+
+function simStep() {
+  if (vPhase) {
+    vPhase.step++;
+    const t = vPhase.step / vPhase.total;
+    const conc = t < 0.4 ? 15 + t*10 : 15 + (t-0.4)/0.6 * 85;
+    for (let i=0; i<14; i++) CFG.vals[i] = conc + (Math.random()-0.5)*12;
+    if (vPhase.step >= vPhase.total) vPhase = null;
+  } else if (CFG.manual) {
+    for (let i=0; i<14; i++) CFG.vals[i] = CFG.manVal + (Math.random()-0.5)*8;
+  } else {
+    for (let i=0; i<14; i++) {
+      CFG.vals[i] += (Math.random()-0.5)*6;
+      CFG.vals[i] = Math.max(5, Math.min(95, CFG.vals[i]));
+    }
+  }
+  const avg = CFG.vals.reduce((s,v)=>s+v,0)/14;
+  // simulate band powers
+  const focus = avg/100;
+  bands.alpha = 60 - focus*40 + (Math.random()-0.5)*10;
+  bands.beta  = 30 + focus*50 + (Math.random()-0.5)*10;
+  bands.theta = 40 + (Math.random()-0.5)*15;
+  bands.delta = 30 + (Math.random()-0.5)*10;
+  bands.gamma = 20 + focus*30 + (Math.random()-0.5)*8;
+  Object.keys(bands).forEach(k => bands[k] = Math.max(0, Math.min(100, bands[k])));
+  CFG.history.push(avg);
+  if (CFG.history.length > 120) CFG.history.shift();
+
+  // V-pattern detection
+  if (!CFG.vLow && avg < CFG.thLow) { CFG.vLow = true; CFG.vLowTime = Date.now(); }
+  if (CFG.vLow && avg > CFG.thHigh) {
+    const elapsed = (Date.now() - CFG.vLowTime) / 1000;
+    if (elapsed < CFG.dt * 2) triggerVAlert();
+    CFG.vLow = false;
+  }
+  return avg;
+}
+
+let vAlertTimer = null;
+function triggerVAlert() {
+  const el = document.getElementById('vAlert');
+  el.style.display = 'block';
+  clearTimeout(vAlertTimer);
+  vAlertTimer = setTimeout(() => el.style.display='none', 2500);
+}
+
+// ── UPDATE 3D VISUALS ─────────────────────────────────────
+function update3D() {
+  CFG.electrodes.forEach((e, i) => {
+    const t = CFG.vals[i] / 100;
+    const c = jet(t);
+    eMats[i].color.setRGB(c.r, c.g, c.b);
+    eMats[i].emissive.setRGB(c.r*0.5, c.g*0.5, c.b*0.5);
+    eMats[i].emissiveIntensity = 0.4 + t * 1.2;
+    glowMeshes[i].material.color.setRGB(c.r, c.g, c.b);
+    glowMeshes[i].material.opacity = 0.3 + t * 0.7;
+    const s = 0.25 + t * 0.45;
+    glowMeshes[i].scale.set(s, s, 1);
+  });
+
+  // Brain sphere pulse with avg
+  const avg = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
+  brainMat.opacity = 0.12 + avg * 0.14;
+}
+
+// ── UI UPDATE ─────────────────────────────────────────────
+function updateUI(avg) {
+  const ba = (0.5 + avg/200).toFixed(2);
+  document.getElementById('concNum').textContent = Math.round(avg)+'%';
+  const c = jet(avg/100);
+  document.getElementById('concNum').style.color = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+  document.getElementById('baRatio').textContent = ba;
+
+  const badge = document.getElementById('stateBadge');
+  if (avg < CFG.thLow) {
+    badge.textContent = 'RELAXED'; badge.style.background='rgba(0,100,200,0.25)'; badge.style.color='#60a0ff';
+  } else if (avg > CFG.thHigh) {
+    badge.textContent = 'FOCUSED'; badge.style.background='rgba(255,80,0,0.25)'; badge.style.color='#ff9060';
+  } else {
+    badge.textContent = 'TRANSITION'; badge.style.background='rgba(0,180,100,0.2)'; badge.style.color='#60dd90';
+  }
+
+  ['delta','theta','alpha','beta','gamma'].forEach(k => {
+    document.getElementById('b'+k.charAt(0).toUpperCase()+k.slice(1)).textContent = bands[k].toFixed(1);
+    document.getElementById('b'+k.charAt(0).toUpperCase()+k.slice(1)+'Bar').style.width = bands[k]+'%';
+  });
+
+  // Electrode list
+  const el = document.getElementById('electrodeList');
+  el.innerHTML = CFG.electrodes.map((e,i) => {
+    const v = CFG.vals[i], t = v/100, cc = jet(t);
+    const col = `rgb(${Math.round(cc.r*255)},${Math.round(cc.g*255)},${Math.round(cc.b*255)})`;
+    return `<div style="display:flex;justify-content:space-between"><span style="color:#6480cc">${e.n}</span><span style="color:${col}">${v.toFixed(1)}</span></div>`;
+  }).join('');
+}
+
+// ── GRAPH ─────────────────────────────────────────────────
+function drawGraph() {
+  const cv = document.getElementById('graphCanvas');
+  const ctx = cv.getContext('2d');
+  cv.width = cv.offsetWidth * devicePixelRatio;
+  cv.height = cv.offsetHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const W = cv.offsetWidth, H = cv.offsetHeight, pad = 6;
+  ctx.fillStyle = 'transparent'; ctx.clearRect(0,0,W,H);
+  const hist = CFG.history;
+  if (hist.length < 2) return;
+  // threshold lines
+  [[CFG.thLow,'rgba(60,100,255,0.4)'],[CFG.thHigh,'rgba(255,100,60,0.4)']].forEach(([th,col]) => {
+    const y = H - pad - (th/100)*(H-2*pad);
+    ctx.strokeStyle=col; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  // gradient line
+  const grad = ctx.createLinearGradient(pad,0,W-pad,0);
+  grad.addColorStop(0,'#4060cc'); grad.addColorStop(0.5,'#40cc80'); grad.addColorStop(1,'#ff8040');
+  ctx.strokeStyle = grad; ctx.lineWidth = 2;
+  ctx.beginPath();
+  hist.forEach((v,i) => {
+    const x = pad + (i/(hist.length-1))*(W-2*pad);
+    const y = H - pad - (v/100)*(H-2*pad);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────
+let frame = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  frame++;
+  if (frame % 6 === 0) { // ~10Hz sim
+    const avg = simStep();
+    update3D();
+    updateUI(avg);
+    drawGraph();
+  }
+  // Camera orbit
+  camera.position.x = zoom * Math.sin(rotY) * Math.cos(rotX);
+  camera.position.y = zoom * Math.sin(rotX);
+  camera.position.z = zoom * Math.cos(rotY) * Math.cos(rotX);
+  camera.lookAt(0, 0.1, 0);
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── ADMIN / MODAL ─────────────────────────────────────────
+function showAdmin() { document.getElementById('adminModal').classList.add('show'); }
+function closeModal() { document.getElementById('adminModal').classList.remove('show'); document.getElementById('pwInput').value=''; }
+function checkPw() {
+  if (document.getElementById('pwInput').value === CFG.pw) {
+    closeModal();
+    document.getElementById('adminUI').style.display = 'block';
+  } else { alert('Wrong password'); }
+}
+function updateCfg() {
+  CFG.thLow = +document.getElementById('thLow').value;
+  CFG.thHigh = +document.getElementById('thHigh').value;
+  CFG.dt = +document.getElementById('dtSlider').value;
+  document.getElementById('tlv').textContent = CFG.thLow;
+  document.getElementById('thv').textContent = CFG.thHigh;
+  document.getElementById('dtv').textContent = CFG.dt;
+}
+function updateManual() {
+  CFG.manVal = +document.getElementById('manSlider').value;
+  CFG.manual = true;
+  document.getElementById('mv').textContent = CFG.manVal;
+}
+function forceV() {
+  vPhase = { step: 0, total: 80 };
+  CFG.manual = false;
+  document.getElementById('manSlider').value = 50;
+}
+</script>
+</body>
+</html>
