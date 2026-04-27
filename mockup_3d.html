@@ -39,6 +39,19 @@
     .modal-box input { width: 100%; background: rgba(100,140,255,0.1); border: 1px solid rgba(100,140,255,0.3); color: #e0e8ff; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
     .modal-btns { display: flex; gap: 8px; }
     .modal-btns button { flex: 1; }
+    /* Report modal */
+    #reportModal .modal-box { width: 480px; max-height: 80vh; overflow-y: auto; }
+    .report-stat { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(100,140,255,0.1); font-size: 11px; }
+    .report-stat span:first-child { color: #6480cc; }
+    .report-stat span:last-child { color: #e0e8ff; font-weight: bold; }
+    .report-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 8px; }
+    .report-table th { color: #6480cc; text-align: left; padding: 3px 4px; border-bottom: 1px solid rgba(100,140,255,0.2); }
+    .report-table td { color: #c0d0ff; padding: 3px 4px; border-bottom: 1px solid rgba(100,140,255,0.08); }
+    /* WS status */
+    .ws-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; background: #444; }
+    .ws-dot.connected { background: #00cc66; box-shadow: 0 0 6px #00cc66; }
+    .ws-dot.error     { background: #cc4444; }
+    .ws-dot.connecting { background: #ffcc44; }
     #vAlert { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(100,140,255,0.15); border: 2px solid #6480cc; border-radius: 12px; padding: 20px 40px; font-size: 18px; font-weight: bold; color: #a0c0ff; display: none; pointer-events: none; text-align: center; backdrop-filter: blur(10px); }
     #tooltip { position: fixed; display: none; background: rgba(5,8,16,0.92); border: 1px solid rgba(100,140,255,0.5); border-radius: 6px; padding: 6px 10px; font-size: 11px; pointer-events: none; z-index: 50; }
     #tooltip .t-name { color: #a0c0ff; font-weight: bold; margin-bottom: 2px; }
@@ -89,6 +102,10 @@
       </div>
       <div style="text-align:center;margin-top:6px;font-size:10px;color:#6480cc" id="hemiStatus">BALANCED</div>
     </div>
+    <div class="panel-box">
+      <div class="panel-title">BRAIN REGIONS</div>
+      <div id="regionList"></div>
+    </div>
   </div>
 
   <!-- CENTER -->
@@ -124,12 +141,16 @@
           <label>Manual <span id="mv">50</span>%</label>
           <input type="range" id="manSlider" min="0" max="100" value="50" oninput="updateManual()">
         </div>
-        <select id="srcSel">
+        <select id="srcSel" onchange="onSourceChange()">
           <option value="sim">SIMULATION</option>
           <option value="deap">DEAP DATASET</option>
           <option value="device">EMOTIV EPOC X</option>
         </select>
+        <div id="wsStatusRow" style="display:none;font-size:10px;color:#6480cc;margin-top:4px;text-align:center">
+          <span class="ws-dot" id="wsDot"></span><span id="wsStatusText">CONNECTING...</span>
+        </div>
         <button onclick="forceV()">⚡ FORCE V-PATTERN</button>
+        <button onclick="showReport()">📊 SESSION REPORT</button>
       </div>
     </div>
   </div>
@@ -138,6 +159,22 @@
 <div id="tooltip"><div class="t-name"></div><div class="t-val"></div></div>
 <div class="hint">🖱 Drag to rotate · Scroll to zoom · Hover electrode for info</div>
 <div id="vAlert">⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#6480cc">FOCUS → CONTROL TRANSFER</span></div>
+
+<!-- REPORT MODAL -->
+<div class="modal" id="reportModal">
+  <div class="modal-box" style="width:500px">
+    <h3>SESSION REPORT</h3>
+    <div id="reportSummary"></div>
+    <div style="margin-top:14px;font-size:10px;color:#6480cc;letter-spacing:1px">V-PATTERN EVENTS</div>
+    <div id="reportEvents"></div>
+    <div style="margin-top:14px;font-size:10px;color:#6480cc;letter-spacing:1px">PEAK ANALYSIS</div>
+    <div id="reportPeaks"></div>
+    <div class="modal-btns" style="margin-top:16px">
+      <button onclick="exportCSV()">⬇ EXPORT CSV</button>
+      <button onclick="document.getElementById('reportModal').classList.remove('show')" style="background:rgba(255,60,60,0.15)">CLOSE</button>
+    </div>
+  </div>
+</div>
 
 <!-- ADMIN MODAL -->
 <div class="modal" id="adminModal">
@@ -168,8 +205,93 @@ const CFG = {
   ],
   vals: new Float32Array(14).fill(50),
   history: [],
-  vLow: false, vLowTime: 0
+  vLow: false, vLowTime: 0,
+  dataSource: 'sim'  // 'sim' | 'ws'
 };
+
+// ── BRAIN REGION DEFINITIONS (electrode index groups) ─────
+const REGIONS = [
+  { name:'FRONTAL',  idxs:[0,1,2,3,4,5],  color:'#6688ff' },
+  { name:'CENTRAL',  idxs:[6,7],           color:'#44ddaa' },
+  { name:'TEMPORAL', idxs:[8,9],           color:'#ffaa44' },
+  { name:'PARIETAL', idxs:[10,11],         color:'#cc88ff' },
+  { name:'OCCIPITAL',idxs:[12,13],         color:'#ff6677' }
+];
+
+// ── SESSION REPORT TRACKER ────────────────────────────────
+const RPT = {
+  sessionStart: Date.now(),
+  events: [],   // {t, concBefore, concAfter, peakConc, peakDelay}
+  peaks: [],    // {t, conc}
+  _lastAvg: 50,
+  _rising: false
+};
+function rptTick(avg) {
+  // detect local peaks
+  if (RPT._rising && avg < RPT._lastAvg - 1) {
+    RPT.peaks.push({ t: Date.now(), conc: RPT._lastAvg });
+  }
+  RPT._rising = avg > RPT._lastAvg;
+  RPT._lastAvg = avg;
+}
+
+// ── WEBSOCKET CLIENT ──────────────────────────────────────
+let ws = null, wsReTimer = null;
+function wsSetStatus(state) {
+  const row  = document.getElementById('wsStatusRow');
+  const dot  = document.getElementById('wsDot');
+  const txt  = document.getElementById('wsStatusText');
+  row.style.display = 'block';
+  dot.className = 'ws-dot ' + state;
+  txt.textContent = state === 'connected' ? 'CONNECTED'
+                  : state === 'error'     ? 'ERROR — retrying…'
+                  : state === 'connecting'? 'CONNECTING…'
+                  : 'DISCONNECTED';
+}
+function wsConnect() {
+  if (ws && ws.readyState <= 1) return;
+  wsSetStatus('connecting');
+  try { ws = new WebSocket('ws://localhost:8765'); } catch(e) { wsSetStatus('error'); return; }
+  ws.onopen = () => wsSetStatus('connected');
+  ws.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type === 'eeg') {
+        d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
+        if (d.bands) {
+          bands.delta = d.bands.delta; bands.theta = d.bands.theta;
+          bands.alpha = d.bands.alpha; bands.beta  = d.bands.beta;
+          bands.gamma = d.bands.gamma;
+        }
+        CFG.dataSource = 'ws';
+      } else if (d.type === 'meta') {
+        console.log('[WS] DEAP meta:', d);
+      } else if (d.type === 'done') {
+        console.log('[WS] Stream finished, trial', d.trial);
+      } else if (d.type === 'status') {
+        console.log('[WS]', d.message);
+      }
+    } catch(_) {}
+  };
+  ws.onclose = () => {
+    wsSetStatus('error');
+    CFG.dataSource = 'sim';
+    clearTimeout(wsReTimer);
+    wsReTimer = setTimeout(wsConnect, 3000);
+  };
+  ws.onerror = () => wsSetStatus('error');
+}
+function onSourceChange() {
+  const src = document.getElementById('srcSel').value;
+  if (src === 'sim') {
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    clearTimeout(wsReTimer);
+    CFG.dataSource = 'sim';
+    document.getElementById('wsStatusRow').style.display = 'none';
+  } else {
+    wsConnect();
+  }
+}
 
 // ── JET COLORMAP ──────────────────────────────────────────
 function jet(t) {
@@ -408,49 +530,51 @@ let vPhase = null;
 let controlActive = false;
 
 function simStep() {
-  if (vPhase) {
-    vPhase.step++;
-    const t = vPhase.step / vPhase.total;
-    const conc = t < 0.4 ? 15 + t*10 : 15 + (t-0.4)/0.6 * 85;
-    for (let i=0; i<14; i++) CFG.vals[i] = conc + (Math.random()-0.5)*12;
-    if (vPhase.step >= vPhase.total) vPhase = null;
-  } else if (CFG.manual) {
-    for (let i=0; i<14; i++) CFG.vals[i] = CFG.manVal + (Math.random()-0.5)*8;
-  } else {
-    for (let i=0; i<14; i++) {
-      CFG.vals[i] += (Math.random()-0.5)*6;
-      CFG.vals[i] = Math.max(5, Math.min(95, CFG.vals[i]));
+  // WS 연결 중이면 vals는 ws.onmessage에서 이미 업데이트됨 → 시뮬레이션 스킵
+  if (CFG.dataSource !== 'ws') {
+    if (vPhase) {
+      vPhase.step++;
+      const t = vPhase.step / vPhase.total;
+      const conc = t < 0.4 ? 15 + t*10 : 15 + (t-0.4)/0.6 * 85;
+      for (let i=0; i<14; i++) CFG.vals[i] = conc + (Math.random()-0.5)*12;
+      if (vPhase.step >= vPhase.total) vPhase = null;
+    } else if (CFG.manual) {
+      for (let i=0; i<14; i++) CFG.vals[i] = CFG.manVal + (Math.random()-0.5)*8;
+    } else {
+      for (let i=0; i<14; i++) {
+        CFG.vals[i] += (Math.random()-0.5)*6;
+        CFG.vals[i] = Math.max(5, Math.min(95, CFG.vals[i]));
+      }
     }
+    // simulate band powers (only in sim mode)
+    const focus = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
+    bands.alpha = 60 - focus*40 + (Math.random()-0.5)*10;
+    bands.beta  = 30 + focus*50 + (Math.random()-0.5)*10;
+    bands.theta = 40 + (Math.random()-0.5)*15;
+    bands.delta = 30 + (Math.random()-0.5)*10;
+    bands.gamma = 20 + focus*30 + (Math.random()-0.5)*8;
+    Object.keys(bands).forEach(k => bands[k] = Math.max(0, Math.min(100, bands[k])));
   }
+
   const avg = CFG.vals.reduce((s,v)=>s+v,0)/14;
-  // simulate band powers
-  const focus = avg/100;
-  bands.alpha = 60 - focus*40 + (Math.random()-0.5)*10;
-  bands.beta  = 30 + focus*50 + (Math.random()-0.5)*10;
-  bands.theta = 40 + (Math.random()-0.5)*15;
-  bands.delta = 30 + (Math.random()-0.5)*10;
-  bands.gamma = 20 + focus*30 + (Math.random()-0.5)*8;
-  Object.keys(bands).forEach(k => bands[k] = Math.max(0, Math.min(100, bands[k])));
   CFG.history.push(avg);
   if (CFG.history.length > 120) CFG.history.shift();
+  rptTick(avg);
 
-  // V-pattern detection (스펙 기준)
-  // (b) Th_low 이하 하강 → 이완 감지
+  // V-pattern detection
   if (!CFG.vLow && avg < CFG.thLow) {
     CFG.vLow = true;
     CFG.vLowTime = Date.now();
   }
-  // Δt 초과 시 리셋
   if (CFG.vLow && (Date.now() - CFG.vLowTime) / 1000 > CFG.dt) {
     CFG.vLow = false;
   }
-  // (c) Δt 이내 Th_high 이상 상승 + 기울기 조건
   if (CFG.vLow && avg > CFG.thHigh) {
     const elapsed = (Date.now() - CFG.vLowTime) / 1000;
     const recent = CFG.history.slice(-8);
     const slope = recent.length > 3 ? (recent[recent.length-1] - recent[recent.length-4]) / 3 : 0;
     if (elapsed < CFG.dt && slope > 1.5) {
-      toggleControl(); // (d) 토글 방식 제어 전환
+      toggleControl(avg);
     }
     CFG.vLow = false;
   }
@@ -460,8 +584,22 @@ function simStep() {
 let vAlertTimer = null;
 let pulseActive = false, pulseTimer = 0;
 
-function toggleControl() {
+function toggleControl(concAtEvent = 50) {
   controlActive = !controlActive;
+  // Record event for report
+  const evtTime = Date.now();
+  const eventEntry = { t: evtTime, concAtEvent, type: controlActive ? 'ACTIVATED' : 'DEACTIVATED', peakConc: null, peakDelay: null };
+  RPT.events.push(eventEntry);
+  // Find next peak within 10s (checked later in rptTick via closure)
+  setTimeout(() => {
+    const recentPeaks = RPT.peaks.filter(p => p.t > evtTime && p.t < evtTime + 10000);
+    if (recentPeaks.length > 0) {
+      const best = recentPeaks.reduce((a,b) => b.conc > a.conc ? b : a);
+      eventEntry.peakConc  = Math.round(best.conc);
+      eventEntry.peakDelay = ((best.t - evtTime) / 1000).toFixed(1);
+    }
+  }, 10000);
+
   const el = document.getElementById('vAlert');
   el.innerHTML = controlActive
     ? '⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#ff9060">CONTROL ACTIVATED</span>'
@@ -525,6 +663,20 @@ function updateUI(avg) {
   document.getElementById('rHemiVal').textContent = rAvg.toFixed(0);
   const diff = Math.abs(lAvg - rAvg);
   document.getElementById('hemiStatus').textContent = diff < 8 ? 'BALANCED' : lAvg > rAvg ? 'L DOMINANT' : 'R DOMINANT';
+
+  // Brain region averages (C)
+  document.getElementById('regionList').innerHTML = REGIONS.map(r => {
+    const rv = r.idxs.reduce((s,i) => s + CFG.vals[i], 0) / r.idxs.length;
+    const c = jet(rv/100);
+    const col = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+    return `<div style="margin-bottom:5px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px">
+        <span style="color:${r.color}">${r.name}</span>
+        <span style="color:${col};font-weight:bold">${rv.toFixed(1)}%</span>
+      </div>
+      <div class="bar-bg"><div class="bar-fill" style="background:${col};width:${rv}%"></div></div>
+    </div>`;
+  }).join('');
 
   // Electrode list
   const el = document.getElementById('electrodeList');
@@ -627,6 +779,80 @@ function forceV() {
   vPhase = { step: 0, total: 80 };
   CFG.manual = false;
   document.getElementById('manSlider').value = 50;
+}
+
+// ── SESSION REPORT (D) ────────────────────────────────────
+function fmtTime(ms) {
+  const s = Math.round((ms - RPT.sessionStart) / 1000);
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+}
+function showReport() {
+  const hist = CFG.history;
+  const dur  = Math.round((Date.now() - RPT.sessionStart) / 1000);
+  const avgC = hist.length ? (hist.reduce((a,b)=>a+b,0)/hist.length).toFixed(1) : '-';
+  const maxC = hist.length ? Math.max(...hist).toFixed(1) : '-';
+  const minC = hist.length ? Math.min(...hist).toFixed(1) : '-';
+  const src  = document.getElementById('srcSel').value.toUpperCase();
+
+  // Summary
+  const delayArr = RPT.events.filter(e=>e.peakDelay!==null).map(e=>+e.peakDelay);
+  const avgDelay = delayArr.length ? (delayArr.reduce((a,b)=>a+b,0)/delayArr.length).toFixed(1)+'s' : 'N/A';
+  document.getElementById('reportSummary').innerHTML = `
+    <div class="report-stat"><span>Session Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
+    <div class="report-stat"><span>Data Source</span><span>${src}</span></div>
+    <div class="report-stat"><span>Avg Concentration</span><span>${avgC}%</span></div>
+    <div class="report-stat"><span>Max Concentration</span><span>${maxC}%</span></div>
+    <div class="report-stat"><span>Min Concentration</span><span>${minC}%</span></div>
+    <div class="report-stat"><span>V-Pattern Events</span><span>${RPT.events.length}</span></div>
+    <div class="report-stat"><span>Avg Peak Delay</span><span>${avgDelay}</span></div>
+  `;
+
+  // Events table
+  if (RPT.events.length === 0) {
+    document.getElementById('reportEvents').innerHTML = '<div style="font-size:10px;color:#6480cc;padding:6px 0">No events recorded yet</div>';
+  } else {
+    document.getElementById('reportEvents').innerHTML = `
+      <table class="report-table">
+        <thead><tr><th>Time</th><th>Type</th><th>Conc@Event</th><th>Peak Conc</th><th>Peak Delay</th></tr></thead>
+        <tbody>${RPT.events.map(e=>`
+          <tr>
+            <td>${fmtTime(e.t)}</td>
+            <td style="color:${e.type==='ACTIVATED'?'#ff9060':'#6480cc'}">${e.type}</td>
+            <td>${e.concAtEvent.toFixed(1)}%</td>
+            <td>${e.peakConc!==null ? e.peakConc+'%' : '—'}</td>
+            <td>${e.peakDelay!==null ? e.peakDelay+'s' : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // Session peaks summary
+  const topPeaks = [...RPT.peaks].sort((a,b)=>b.conc-a.conc).slice(0,5);
+  document.getElementById('reportPeaks').innerHTML = topPeaks.length === 0
+    ? '<div style="font-size:10px;color:#6480cc;padding:6px 0">No peaks detected yet</div>'
+    : `<table class="report-table">
+        <thead><tr><th>Time</th><th>Peak Concentration</th></tr></thead>
+        <tbody>${topPeaks.map(p=>`<tr><td>${fmtTime(p.t)}</td><td style="color:#ffaa44">${p.conc.toFixed(1)}%</td></tr>`).join('')}
+        </tbody>
+      </table>`;
+
+  document.getElementById('reportModal').classList.add('show');
+}
+
+function exportCSV() {
+  const rows = ['Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)'];
+  RPT.events.forEach(e => {
+    const t = ((e.t - RPT.sessionStart)/1000).toFixed(1);
+    rows.push(`${t},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`);
+  });
+  const histRows = ['SessionTime(s),Concentration(%)'];
+  CFG.history.forEach((v,i) => histRows.push(`${(i*0.6).toFixed(1)},${v.toFixed(1)}`));
+
+  const blob = new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+  a.click();
 }
 </script>
 </body>
