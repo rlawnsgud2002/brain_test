@@ -40,6 +40,9 @@
     .modal-btns { display: flex; gap: 8px; }
     .modal-btns button { flex: 1; }
     #vAlert { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(100,140,255,0.15); border: 2px solid #6480cc; border-radius: 12px; padding: 20px 40px; font-size: 18px; font-weight: bold; color: #a0c0ff; display: none; pointer-events: none; text-align: center; backdrop-filter: blur(10px); }
+    #tooltip { position: fixed; display: none; background: rgba(5,8,16,0.92); border: 1px solid rgba(100,140,255,0.5); border-radius: 6px; padding: 6px 10px; font-size: 11px; pointer-events: none; z-index: 50; }
+    #tooltip .t-name { color: #a0c0ff; font-weight: bold; margin-bottom: 2px; }
+    #tooltip .t-val  { color: #e0e8ff; }
   </style>
 </head>
 <body>
@@ -118,7 +121,8 @@
   </div>
 </div>
 
-<div class="hint">🖱 Drag to rotate · Scroll to zoom</div>
+<div id="tooltip"><div class="t-name"></div><div class="t-val"></div></div>
+<div class="hint">🖱 Drag to rotate · Scroll to zoom · Hover electrode for info</div>
 <div id="vAlert">⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#6480cc">FOCUS → CONTROL TRANSFER</span></div>
 
 <!-- ADMIN MODAL -->
@@ -304,6 +308,34 @@ canvas.addEventListener('touchmove', e => {
   e.preventDefault();
 }, {passive:false});
 canvas.addEventListener('touchend', () => lastTouch = null);
+
+// ── ELECTRODE TOOLTIP (Raycaster) ────────────────────────
+const raycaster = new THREE.Raycaster();
+const mouse2d = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+raycaster.params.Mesh = { threshold: 0.05 };
+
+window.addEventListener('mousemove', e => {
+  if (drag) { tooltip.style.display = 'none'; return; }
+  mouse2d.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse2d.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse2d, camera);
+  const hits = raycaster.intersectObjects(eMeshes);
+  if (hits.length > 0) {
+    const idx = eMeshes.indexOf(hits[0].object);
+    const e2 = CFG.electrodes[idx];
+    const v = CFG.vals[idx];
+    const c = jet(v/100);
+    const col = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+    tooltip.querySelector('.t-name').textContent = e2.n;
+    tooltip.querySelector('.t-val').innerHTML = `Activity: <span style="color:${col};font-weight:bold">${v.toFixed(1)}%</span>`;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top  = (e.clientY - 38) + 'px';
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
 
 // ── RESIZE ───────────────────────────────────────────────
 function resize() {
