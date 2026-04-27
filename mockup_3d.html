@@ -207,6 +207,31 @@ const ringGeo = new THREE.TorusGeometry(1.01, 0.003, 8, 80);
 const ringMat = new THREE.MeshBasicMaterial({ color: 0x4466aa, transparent: true, opacity: 0.4 });
 scene.add(new THREE.Mesh(ringGeo, ringMat));
 
+// Nose marker (정면 표시 - 앞쪽 중앙)
+const noseMesh = new THREE.Mesh(
+  new THREE.ConeGeometry(0.04, 0.12, 8),
+  new THREE.MeshBasicMaterial({ color: 0xffcc44 })
+);
+noseMesh.position.set(0, -0.18, 1.02);
+noseMesh.rotation.x = Math.PI / 2;
+scene.add(noseMesh);
+
+// Direction labels (F/B/L/R)
+function makeLabel(text, color) {
+  const c = document.createElement('canvas'); c.width = 80; c.height = 40;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color; ctx.font = 'bold 22px Courier New';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 40, 20);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.75 }));
+  sp.scale.set(0.35, 0.18, 1);
+  return sp;
+}
+const frontLabel = makeLabel('FRONT', '#ffcc44'); frontLabel.position.set(0, -0.05, 1.35); scene.add(frontLabel);
+const backLabel  = makeLabel('BACK',  '#6480cc'); backLabel.position.set(0, -0.05, -1.35); scene.add(backLabel);
+const leftLabel  = makeLabel('L',     '#6480cc'); leftLabel.position.set(-1.35, 0, 0);    scene.add(leftLabel);
+const rightLabel = makeLabel('R',     '#6480cc'); rightLabel.position.set(1.35, 0, 0);    scene.add(rightLabel);
+
 // Electrode meshes
 const eGeos = CFG.electrodes.map(() => new THREE.SphereGeometry(0.045, 12, 12));
 const eMats = CFG.electrodes.map(() => new THREE.MeshStandardMaterial({
@@ -261,7 +286,7 @@ canvas.addEventListener('mousedown', e => { drag = true; lastMouse = {x:e.client
 window.addEventListener('mouseup', () => drag = false);
 window.addEventListener('mousemove', e => {
   if (!drag) return;
-  rotY += (e.clientX - lastMouse.x) * 0.007;
+  rotY -= (e.clientX - lastMouse.x) * 0.007;
   rotX += (e.clientY - lastMouse.y) * 0.007;
   rotX = Math.max(-1.4, Math.min(1.4, rotX));
   lastMouse = {x:e.clientX, y:e.clientY};
@@ -273,7 +298,7 @@ let lastTouch = null;
 canvas.addEventListener('touchstart', e => { lastTouch = e.touches[0]; });
 canvas.addEventListener('touchmove', e => {
   if (!lastTouch) return;
-  rotY += (e.touches[0].clientX - lastTouch.clientX) * 0.007;
+  rotY -= (e.touches[0].clientX - lastTouch.clientX) * 0.007;
   rotX += (e.touches[0].clientY - lastTouch.clientY) * 0.007;
   lastTouch = e.touches[0];
   e.preventDefault();
@@ -291,7 +316,8 @@ resize();
 
 // ── EEG SIMULATION ───────────────────────────────────────
 let bands = {delta:50, theta:40, alpha:50, beta:50, gamma:30};
-let vPhase = null; // null | {step, total}
+let vPhase = null;
+let controlActive = false;
 
 function simStep() {
   if (vPhase) {
@@ -320,19 +346,37 @@ function simStep() {
   CFG.history.push(avg);
   if (CFG.history.length > 120) CFG.history.shift();
 
-  // V-pattern detection
-  if (!CFG.vLow && avg < CFG.thLow) { CFG.vLow = true; CFG.vLowTime = Date.now(); }
+  // V-pattern detection (스펙 기준)
+  // (b) Th_low 이하 하강 → 이완 감지
+  if (!CFG.vLow && avg < CFG.thLow) {
+    CFG.vLow = true;
+    CFG.vLowTime = Date.now();
+  }
+  // Δt 초과 시 리셋
+  if (CFG.vLow && (Date.now() - CFG.vLowTime) / 1000 > CFG.dt) {
+    CFG.vLow = false;
+  }
+  // (c) Δt 이내 Th_high 이상 상승 + 기울기 조건
   if (CFG.vLow && avg > CFG.thHigh) {
     const elapsed = (Date.now() - CFG.vLowTime) / 1000;
-    if (elapsed < CFG.dt * 2) triggerVAlert();
+    const recent = CFG.history.slice(-8);
+    const slope = recent.length > 3 ? (recent[recent.length-1] - recent[recent.length-4]) / 3 : 0;
+    if (elapsed < CFG.dt && slope > 1.5) {
+      toggleControl(); // (d) 토글 방식 제어 전환
+    }
     CFG.vLow = false;
   }
   return avg;
 }
 
 let vAlertTimer = null;
-function triggerVAlert() {
+function toggleControl() {
+  controlActive = !controlActive;
   const el = document.getElementById('vAlert');
+  el.innerHTML = controlActive
+    ? '⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#ff9060">CONTROL ACTIVATED</span>'
+    : '⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#6480cc">CONTROL DEACTIVATED</span>';
+  el.style.borderColor = controlActive ? '#ff8040' : '#6480cc';
   el.style.display = 'block';
   clearTimeout(vAlertTimer);
   vAlertTimer = setTimeout(() => el.style.display='none', 2500);
