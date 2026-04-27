@@ -440,6 +440,8 @@ function simStep() {
 }
 
 let vAlertTimer = null;
+let pulseActive = false, pulseTimer = 0;
+
 function toggleControl() {
   controlActive = !controlActive;
   const el = document.getElementById('vAlert');
@@ -450,6 +452,8 @@ function toggleControl() {
   el.style.display = 'block';
   clearTimeout(vAlertTimer);
   vAlertTimer = setTimeout(() => el.style.display='none', 2500);
+  pulseActive = true;
+  pulseTimer = 0;
 }
 
 // ── UPDATE 3D VISUALS ─────────────────────────────────────
@@ -544,6 +548,21 @@ function animate() {
     updateUI(avg);
     drawGraph();
   }
+  // V-pattern pulse effect
+  if (pulseActive) {
+    pulseTimer += 0.06;
+    const p = Math.sin(pulseTimer * 3) * 0.5 + 0.5;
+    const col = controlActive ? {r:0.8+p*0.2, g:0.3+p*0.1, b:0.1} : {r:0.1, g:0.3+p*0.2, b:0.8+p*0.2};
+    brainMat.color.setRGB(col.r, col.g, col.b);
+    brainMat.opacity = 0.15 + p * 0.40;
+    eMeshes.forEach(m => { m.material.emissiveIntensity = 0.5 + p * 2.0; });
+    if (pulseTimer > Math.PI * 5) {
+      pulseActive = false; pulseTimer = 0;
+      brainMat.color.setHex(0x2244aa);
+      brainMat.opacity = 0.18;
+    }
+  }
+
   // Camera orbit
   camera.position.x = zoom * Math.sin(rotY) * Math.cos(rotX);
   camera.position.y = zoom * Math.sin(rotX);
