@@ -236,13 +236,17 @@ scene.add(noseMesh);
 
 // Direction labels (F/B/L/R)
 function makeLabel(text, color) {
-  const c = document.createElement('canvas'); c.width = 80; c.height = 40;
+  const h = 40;
+  const tmp = document.createElement('canvas').getContext('2d');
+  tmp.font = 'bold 22px Courier New';
+  const w = Math.ceil(tmp.measureText(text).width) + 24;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
   const ctx = c.getContext('2d');
   ctx.fillStyle = color; ctx.font = 'bold 22px Courier New';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(text, 40, 20);
+  ctx.fillText(text, w/2, h/2);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.75 }));
-  sp.scale.set(0.35, 0.18, 1);
+  sp.scale.set(0.18 * (w/h), 0.18, 1);
   return sp;
 }
 const frontLabel = makeLabel('FRONT', '#ffcc44'); frontLabel.position.set(0, -0.05, 1.35); scene.add(frontLabel);
@@ -324,7 +328,7 @@ rVLine(0, -0.90, 0.90, 1.015, 0x334488, 0.20);
 // 영역 라벨
 function rLabel(text, nx, ny) {
   const sp = makeLabel(text, '#3a5a8a');
-  sp.scale.set(0.42, 0.20, 1);
+  sp.scale.multiplyScalar(1.15);
   sp.position.copy(toSphere(nx, ny, 1.22));
   scene.add(sp);
 }
