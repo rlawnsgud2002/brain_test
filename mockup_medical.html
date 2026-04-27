@@ -176,15 +176,17 @@
     }
     function triggerVPattern() {
       CONFIG.history = [];
-      for(let i=0; i<20; i++) {
-        CONFIG.history.push(30 + Math.random()*10);
-      }
-      for(let i=0; i<30; i++) {
-        CONFIG.history.push(30 + (i/30)*50 + Math.random()*10);
-      }
-      CONFIG.lastVPatternTime = Date.now();
+      CONFIG.manualControl = true;
+      for(let i=0; i<14; i++) CONFIG.values[i] = 20 + Math.random()*15;
+      let step = 0;
+      const rise = setInterval(() => {
+        step++;
+        const v = 20 + (step/30)*70;
+        for(let i=0; i<14; i++) CONFIG.values[i] = v + (Math.random()-0.5)*10;
+        if(step >= 30) { clearInterval(rise); CONFIG.manualControl = false; }
+      }, 100);
       document.getElementById('status2').textContent = '✓ V-Pattern triggered';
-      setTimeout(() => document.getElementById('status2').textContent='', 2000);
+      setTimeout(() => document.getElementById('status2').textContent='', 3000);
     }
     function changeDataSource() {
       // Placeholder for data source switching
@@ -231,7 +233,7 @@
           let val=0, wsum=0;
           for(let e of CONFIG.electrodes) {
             const dist = Math.sqrt((nx-e.x)**2 + (ny-e.y)**2);
-            const w = Math.exp(-(dist**2)/0.05);
+            const w = Math.exp(-(dist**2)/0.3);
             val += CONFIG.values[CONFIG.electrodes.indexOf(e)] * w;
             wsum += w;
           }
