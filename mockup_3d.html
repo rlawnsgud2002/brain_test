@@ -144,6 +144,7 @@
         <select id="srcSel" onchange="onSourceChange()">
           <option value="sim">SIMULATION</option>
           <option value="deap">DEAP DATASET</option>
+          <option value="mental">MENTAL STATE CSV</option>
           <option value="device">EMOTIV EPOC X</option>
         </select>
         <div id="wsStatusRow" style="display:none;font-size:10px;color:#6480cc;margin-top:4px;text-align:center">
@@ -307,14 +308,21 @@ function wsConnect() {
         }
         CFG.dataSource = 'ws';
       } else if (d.type === 'state_snapshot') {
-        // 1순위: 새 연결 시 서버 현재 상태로 즉시 복원
         d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
         if (d.bands) {
           bands.delta = d.bands.delta; bands.theta = d.bands.theta;
           bands.alpha = d.bands.alpha; bands.beta  = d.bands.beta;
           bands.gamma = d.bands.gamma;
         }
-        // 3순위: 서버에 저장된 설정값으로 슬라이더 복원
+        // 서버 소스에 맞게 드롭다운 자동 업데이트
+        if (d.source) {
+          const srcMap = { sim:'sim', deap:'deap', mental:'mental',
+                           mental_state:'mental', emotiv:'device' };
+          const sel = document.getElementById('srcSel');
+          const mapped = srcMap[d.source] || 'sim';
+          if ([...sel.options].some(o => o.value === mapped)) sel.value = mapped;
+        }
+        // 서버에 저장된 설정값으로 슬라이더 복원
         if (d.settings) {
           CFG.thLow  = d.settings.thLow;  CFG.thHigh = d.settings.thHigh;
           CFG.dt     = d.settings.dt;
