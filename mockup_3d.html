@@ -264,6 +264,26 @@ function wsConnect() {
           bands.gamma = d.bands.gamma;
         }
         CFG.dataSource = 'ws';
+      } else if (d.type === 'state_snapshot') {
+        // 1순위: 새 연결 시 서버 현재 상태로 즉시 복원
+        d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
+        if (d.bands) {
+          bands.delta = d.bands.delta; bands.theta = d.bands.theta;
+          bands.alpha = d.bands.alpha; bands.beta  = d.bands.beta;
+          bands.gamma = d.bands.gamma;
+        }
+        // 3순위: 서버에 저장된 설정값으로 슬라이더 복원
+        if (d.settings) {
+          CFG.thLow  = d.settings.thLow;  CFG.thHigh = d.settings.thHigh;
+          CFG.dt     = d.settings.dt;
+          document.getElementById('thLow').value    = CFG.thLow;
+          document.getElementById('thHigh').value   = CFG.thHigh;
+          document.getElementById('dtSlider').value = CFG.dt;
+          document.getElementById('tlv').textContent = CFG.thLow;
+          document.getElementById('thv').textContent = CFG.thHigh;
+          document.getElementById('dtv').textContent = CFG.dt;
+        }
+        CFG.dataSource = 'ws';
       } else if (d.type === 'meta') {
         console.log('[WS] DEAP meta:', d);
       } else if (d.type === 'done') {
@@ -769,6 +789,12 @@ function updateCfg() {
   document.getElementById('tlv').textContent = CFG.thLow;
   document.getElementById('thv').textContent = CFG.thHigh;
   document.getElementById('dtv').textContent = CFG.dt;
+  // 3순위: 변경된 설정을 서버에 전송해서 영속화
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'settings',
+      settings: { thLow: CFG.thLow, thHigh: CFG.thHigh, dt: CFG.dt, slope: 1.5 }
+    }));
+  }
 }
 function updateManual() {
   CFG.manVal = +document.getElementById('manSlider').value;

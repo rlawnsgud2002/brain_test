@@ -62,6 +62,19 @@ DEAP_IDX   = [EMOTIV_TO_DEAP[ch] for ch in EMOTIV_CHS]  # length 14
 
 FS = 128  # DEAP sampling rate (Hz)
 
+# ── Global State (1순위: snapshot / 3순위: settings persistence) ──────────────
+STATE = {
+    'channels': [50.0] * 14,
+    'bands': {'delta': 30.0, 'theta': 40.0, 'alpha': 50.0,
+              'beta': 50.0, 'gamma': 30.0, 'concentration': 50.0},
+    'settings': {'thLow': 30, 'thHigh': 70, 'dt': 3, 'slope': 1.5},
+    'source': 'sim'
+}
+
+def update_state(channels, bands):
+    STATE['channels'] = [round(v, 2) for v in channels]
+    STATE['bands'] = bands
+
 # ── Signal Processing ─────────────────────────────────────────────────────────
 def bandpower(signal: 'np.ndarray', fs: int, fmin: float, fmax: float) -> float:
     """Welch PSD band power."""
@@ -144,6 +157,7 @@ async def stream_deap(ws, dat_file: str, trial: int = 0, speed: float = 1.0):
         frame = compute_frame(seg)
         frame['progress'] = round(start / n, 3)
         frame['timestamp'] = start / FS
+        update_state(frame['channels'], frame['bands'])
         try:
             await ws.send(json.dumps(frame))
             await asyncio.sleep(interval)
@@ -165,20 +179,19 @@ async def stream_sim(ws):
             vals[i] = max(5.0, min(95.0, vals[i]))
         avg = sum(vals) / 14
         focus = avg / 100
+        b = {
+            'delta': round(30 + random.gauss(0, 5), 2),
+            'theta': round(40 + random.gauss(0, 7), 2),
+            'alpha': round(60 - focus * 40 + random.gauss(0, 5), 2),
+            'beta':  round(30 + focus * 50 + random.gauss(0, 5), 2),
+            'gamma': round(20 + focus * 30 + random.gauss(0, 4), 2),
+            'concentration': round(avg, 2)
+        }
+        update_state(vals, b)
         try:
             await ws.send(json.dumps({
-                'type': 'eeg',
-                'channels': [round(v, 2) for v in vals],
-                'bands': {
-                    'delta': round(30 + random.gauss(0, 5), 2),
-                    'theta': round(40 + random.gauss(0, 7), 2),
-                    'alpha': round(60 - focus * 40 + random.gauss(0, 5), 2),
-                    'beta':  round(30 + focus * 50 + random.gauss(0, 5), 2),
-                    'gamma': round(20 + focus * 30 + random.gauss(0, 4), 2),
-                    'concentration': round(avg, 2)
-                },
-                'progress': -1,
-                'timestamp': t
+                'type': 'eeg', 'channels': STATE['channels'],
+                'bands': b, 'progress': -1, 'timestamp': round(t, 2)
             }))
             await asyncio.sleep(0.1)
         except websockets.exceptions.ConnectionClosed:
@@ -207,11 +220,41 @@ async def stream_emotiv(ws):
     }))
     await stream_sim(ws)
 
-# ── Handler ───────────────────────────────────────────────────────────────────
+# ── Settings receiver (3순위: settings persistence) ──────────────────────────
+async def recv_settings(ws):
+    """Receive settings updates from client and persist in STATE."""
+    try:
+        async for raw in ws:
+            try:
+                d = json.loads(raw)
+                if d.get('type') == 'settings':
+                    STATE['settings'].update(d['settings'])
+                    print(f"[WS] Settings: {STATE['settings']}")
+            except Exception:
+                pass
+    except websockets.exceptions.ConnectionClosed:
+        pass
+
+# ── Handler (1순위: snapshot / 4순위: clean socket) ──────────────────────────
 def make_handler(source: str, dat_file: Optional[str], trial: int, speed: float):
+    STATE['source'] = source
+
     async def handler(ws, path='/'):
         peer = ws.remote_address
         print(f"[WS] Client connected: {peer}")
+
+        # 1순위: 즉시 현재 상태 스냅샷 전송
+        await ws.send(json.dumps({
+            'type': 'state_snapshot',
+            'channels': STATE['channels'],
+            'bands': STATE['bands'],
+            'settings': STATE['settings'],
+            'source': STATE['source']
+        }))
+
+        # settings 수신 태스크 병렬 실행
+        recv_task = asyncio.create_task(recv_settings(ws))
+
         try:
             if source == 'deap':
                 if not dat_file:
@@ -225,6 +268,12 @@ def make_handler(source: str, dat_file: Optional[str], trial: int, speed: float)
         except Exception as e:
             print(f"[WS] Error: {e}")
         finally:
+            # 4순위: 소켓 정리
+            recv_task.cancel()
+            try:
+                await recv_task
+            except asyncio.CancelledError:
+                pass
             print(f"[WS] Client disconnected: {peer}")
     return handler
 
