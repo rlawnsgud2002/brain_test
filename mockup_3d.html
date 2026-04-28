@@ -900,10 +900,9 @@ function updateManual() {
   document.getElementById('mv').textContent = CFG.manVal;
 }
 function forceV() {
-  if (CFG.dataSource === 'ws') {
-    toggleControl(bands.concentration ?? 50);
-  } else {
-    vPhase = { step: 0, total: 80 };
+  toggleControl(bands.concentration ?? 50);
+  if (CFG.dataSource !== 'ws') {
+    vPhase = { step: 0, total: 30 };
     CFG.manual = false;
     document.getElementById('manSlider').value = 50;
   }
