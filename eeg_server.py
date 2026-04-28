@@ -442,11 +442,18 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
 
     n = len(df)
 
-    # Compute session-level scale factor so bands display in a readable range (1–1000)
-    # freq_bin PSD values can be tiny (e.g. 1e-5); we normalise to ~100 typical
-    _ref = float(df[col_beta].abs().quantile(0.75)) if hasattr(df[col_beta], 'quantile') else 1.0
-    _band_scale = (100.0 / _ref) if _ref > 1e-9 else 1.0
-    print(f"[MENTAL] Band scale factor: {_band_scale:.2f}  (ref beta p75={_ref:.4g})")
+    # Per-band normalisation: scale each band so its median ≈ 50
+    # This keeps all bands in a comparable 0-200 range regardless of 1/f slope
+    def _band_scale(col):
+        med = float(df[col].abs().quantile(0.5))
+        return (50.0 / med) if med > 1e-9 else 1.0
+
+    sc_d = _band_scale(col_delta)
+    sc_t = _band_scale(col_theta)
+    sc_a = _band_scale(col_alpha)
+    sc_b = _band_scale(col_beta)
+    sc_g = _band_scale(col_gamma) if col_gamma else sc_a
+    print(f"[MENTAL] Per-band scales: δ={sc_d:.1f} θ={sc_t:.1f} α={sc_a:.1f} β={sc_b:.1f} γ={sc_g:.1f}")
 
     await ws.send(json.dumps({
         'type': 'meta',
@@ -459,11 +466,11 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
     interval = 0.5 / speed  # ~2 rows/s at real speed
 
     for i, row in df.iterrows():
-        delta = float(row[col_delta]) * _band_scale
-        theta = float(row[col_theta]) * _band_scale
-        alpha = float(row[col_alpha]) * _band_scale
-        beta  = float(row[col_beta])  * _band_scale
-        gamma = (float(row[col_gamma]) * _band_scale) if col_gamma else alpha * 0.5
+        delta = float(row[col_delta]) * sc_d
+        theta = float(row[col_theta]) * sc_t
+        alpha = float(row[col_alpha]) * sc_a
+        beta  = float(row[col_beta])  * sc_b
+        gamma = (float(row[col_gamma]) * sc_g) if col_gamma else alpha * 0.5
         lbl   = int(row['_label_int'])
 
         ratio = beta / (alpha + 1e-9)

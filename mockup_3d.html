@@ -20,7 +20,7 @@
     .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
     .metric-label { font-size: 11px; color: #6480cc; }
     .metric-val { font-size: 13px; font-weight: bold; }
-    .bar-bg { background: rgba(100,140,255,0.15); border-radius: 3px; height: 4px; margin-top: 2px; }
+    .bar-bg { background: rgba(100,140,255,0.15); border-radius: 3px; height: 4px; margin-top: 2px; overflow: hidden; }
     .bar-fill { height: 4px; border-radius: 3px; transition: width 0.3s; }
     canvas.mini { width: 100%; height: 70px; display: block; }
     .colorbar { display: flex; height: 8px; border-radius: 4px; margin: 4px 0; background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff8000, #ff0000); }
@@ -726,9 +726,15 @@ function updateUI(avg) {
     badge.textContent = 'TRANSITION'; badge.style.background='rgba(0,180,100,0.2)'; badge.style.color='#60dd90';
   }
 
-  ['delta','theta','alpha','beta','gamma'].forEach(k => {
-    document.getElementById('b'+k.charAt(0).toUpperCase()+k.slice(1)).textContent = bands[k].toFixed(1);
-    document.getElementById('b'+k.charAt(0).toUpperCase()+k.slice(1)+'Bar').style.width = bands[k]+'%';
+  // Bar width = relative % of total band power (always 0-100, sums to 100)
+  // Text = raw value (keeps absolute magnitudes visible)
+  const _bandKeys = ['delta','theta','alpha','beta','gamma'];
+  const _bandTotal = _bandKeys.reduce((s,k) => s + Math.max(0, bands[k]||0), 0) || 1;
+  _bandKeys.forEach(k => {
+    const relPct = Math.min(100, (bands[k]||0) / _bandTotal * 100);
+    const cap = k.charAt(0).toUpperCase() + k.slice(1);
+    document.getElementById('b'+cap).textContent = (bands[k]||0).toFixed(1);
+    document.getElementById('b'+cap+'Bar').style.width = relPct.toFixed(1) + '%';
   });
 
   // Hemisphere balance (L: AF3,F7,F3,FC5,T7,P7,O1 / R: AF4,F8,F4,FC6,T8,P8,O2)
