@@ -253,33 +253,50 @@ def bands_to_14ch(delta, theta, alpha, beta, gamma, noise=6.0):
 
 # ── DEAP Source ───────────────────────────────────────────────────────────────
 async def _tick_experiment(ws, exp_holder, bands):
-    """Advance experiment timer and send phase transitions/done to client."""
+    """Advance experiment timer; send transition/done immediately, progress every 1s."""
     runner = exp_holder[0]
     if runner is None or runner.done:
         return
     status = runner.tick(bands)
-    if status.get('transition') or status.get('state') == 'done':
+    state  = status.get('state')
+
+    if status.get('transition') or state == 'done':
         await ws.send(json.dumps({'type': 'experiment', **status}))
-        if status.get('state') == 'done':
+        if state == 'done':
             path = runner.save()
             runner.export_csv(path.replace('.json', '.csv'))
             await ws.send(json.dumps({'type': 'experiment', 'state': 'saved', 'path': path,
                                       'summary': runner._summary()}))
             print(f"[EXP] Experiment done. Saved → {path}")
+    else:
+        # Send progress tick every ~1s (throttle by checking remaining changes by ≥1)
+        remaining = status.get('remaining', 0)
+        last_rem  = getattr(runner, '_last_sent_remaining', None)
+        if last_rem is None or abs(last_rem - remaining) >= 1.0:
+            runner._last_sent_remaining = remaining
+            await ws.send(json.dumps({'type': 'experiment', **status}))
 
 async def _push_cal(ws, cal_holder, bands):
-    """Feed bands to active calibrator and send progress/result if changed."""
+    """Feed bands to calibrator; send progress every ~1s, transition/done immediately."""
     cal = cal_holder[0]
     if cal is None or cal.done:
         return
     status = cal.push(bands)
-    if status.get('transition') or status.get('state') == 'done':
+    state  = status.get('state')
+
+    if status.get('transition') or state == 'done':
         await ws.send(json.dumps({'type': 'calibration', **status}))
-        if status.get('state') == 'done':
-            # Apply new personal thresholds immediately
+        if state == 'done':
             STATE['settings'].update(cal.to_settings())
             await ws.send(json.dumps({'type': 'settings', 'settings': STATE['settings']}))
             print(f"[CAL] {cal.summary()}")
+    else:
+        # Send progress every ~1s
+        remaining = status.get('remaining', 0)
+        last_rem  = getattr(cal, '_last_sent_remaining', None)
+        if last_rem is None or abs(last_rem - remaining) >= 1.0:
+            cal._last_sent_remaining = remaining
+            await ws.send(json.dumps({'type': 'calibration', **status}))
 
 def _add_vpattern(frame, detector, eeg_seg=None):
     """Attach V-pattern detection result to a frame dict in-place."""
@@ -424,6 +441,13 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
         df['_label_int'] = 2
 
     n = len(df)
+
+    # Compute session-level scale factor so bands display in a readable range (1–1000)
+    # freq_bin PSD values can be tiny (e.g. 1e-5); we normalise to ~100 typical
+    _ref = float(df[col_beta].abs().quantile(0.75)) if hasattr(df[col_beta], 'quantile') else 1.0
+    _band_scale = (100.0 / _ref) if _ref > 1e-9 else 1.0
+    print(f"[MENTAL] Band scale factor: {_band_scale:.2f}  (ref beta p75={_ref:.4g})")
+
     await ws.send(json.dumps({
         'type': 'meta',
         'source': 'mental_state',
@@ -435,15 +459,13 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
     interval = 0.5 / speed  # ~2 rows/s at real speed
 
     for i, row in df.iterrows():
-        delta = float(row[col_delta])
-        theta = float(row[col_theta])
-        alpha = float(row[col_alpha])
-        beta  = float(row[col_beta])
-        gamma = float(row[col_gamma]) if col_gamma else alpha * 0.5
+        delta = float(row[col_delta]) * _band_scale
+        theta = float(row[col_theta]) * _band_scale
+        alpha = float(row[col_alpha]) * _band_scale
+        beta  = float(row[col_beta])  * _band_scale
+        gamma = (float(row[col_gamma]) * _band_scale) if col_gamma else alpha * 0.5
         lbl   = int(row['_label_int'])
 
-        # Normalize band powers to 0-100 range within session
-        b_sum = delta + theta + alpha + beta + gamma + 1e-9
         ratio = beta / (alpha + 1e-9)
         conc  = float(np.clip((ratio - 0.3) * 40 + 50, 0, 100))
 

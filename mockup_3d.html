@@ -968,24 +968,33 @@ function loadCalibration() {
 
 function _handleCalibration(d) {
   const state = d.state || d.phase;
+  const bar   = document.getElementById('calBar');
 
   if (state === 'relax') {
     const prog = d.progress || 0;
-    const rem  = Math.ceil(d.remaining || 0);
-    document.getElementById('calBar').style.width = (prog * 50) + '%';
+    const rem  = Math.ceil(d.remaining ?? CAL.relax);
+    // Relax = first half (0→50%)
+    bar.style.transition = 'width 1s linear';
+    bar.style.width = (prog * 50).toFixed(1) + '%';
     document.getElementById('calTimer').textContent = rem;
+    document.getElementById('calPhaseLabel').textContent = 'PHASE 1/2 · RELAX';
 
-  } else if (d.transition || state === 'focus') {
+  } else if (d.transition && state === 'focus') {
     CAL.phase = 'focus';
     document.getElementById('calInstructions').textContent =
-      '집중하세요.\n속으로 숫자를 세거나 암산을 하세요.';
+      '집중하세요. 속으로 숫자를 세거나 암산을 하세요.';
     document.getElementById('calPhaseLabel').textContent = 'PHASE 2/2 · FOCUS';
-    if (d.progress !== undefined) {
-      const prog = d.progress || 0;
-      const rem  = Math.ceil(d.remaining || 0);
-      document.getElementById('calBar').style.width = (50 + prog * 50) + '%';
-      document.getElementById('calTimer').textContent = rem;
-    }
+    bar.style.transition = 'none';
+    bar.style.width = '50%';
+
+  } else if (state === 'focus') {
+    const prog = d.progress || 0;
+    const rem  = Math.ceil(d.remaining ?? CAL.focus);
+    // Focus = second half (50→100%)
+    bar.style.transition = 'width 1s linear';
+    bar.style.width = (50 + prog * 50).toFixed(1) + '%';
+    document.getElementById('calTimer').textContent = rem;
+    document.getElementById('calPhaseLabel').textContent = 'PHASE 2/2 · FOCUS';
 
   } else if (state === 'done') {
     CAL.active = false;
@@ -1080,23 +1089,32 @@ function _handleExperiment(d) {
     if (d.instruction) instr.textContent = d.instruction;
     if (d.color)       bar.style.background = d.color;
 
-    const progress = d.phase_progress || 0;
+    const progress  = d.phase_progress || 0;
     const totalProg = ((d.phase_idx || 0) + progress) / (d.phase_total || 1);
-    bar.style.width = (totalProg * 100) + '%';
+    // Smooth transition: 1s linear so bar glides between server ticks
+    bar.style.transition = d.transition ? 'none' : 'width 1s linear';
+    bar.style.width = (totalProg * 100).toFixed(2) + '%';
 
-    if (d.remaining !== undefined)
-      timer.textContent = Math.ceil(d.remaining) + 's';
+    if (d.remaining !== undefined) {
+      // Count down locally between server ticks for smooth display
+      clearInterval(EXP._timerInterval);
+      let rem = d.remaining;
+      timer.textContent = Math.ceil(rem) + 's';
+      EXP._timerInterval = setInterval(() => {
+        rem -= 0.25;
+        if (rem > 0) timer.textContent = Math.ceil(rem) + 's';
+        else clearInterval(EXP._timerInterval);
+      }, 250);
+    }
     if (d.phase_idx !== undefined)
       count.textContent = `${d.phase_idx + 1}/${d.phase_total}`;
 
-    // Color-code the top border by phase type
     const typeColors = { baseline: '#204080', relax: '#2060b0',
                          task: '#b04020', rest: '#204060' };
     document.body.style.borderTop =
       `2px solid ${typeColors[d.phase_type] || '#3060ff'}`;
 
     if (d.transition) {
-      // Flash transition
       document.getElementById('expBar').style.opacity = '0.5';
       setTimeout(() => { document.getElementById('expBar').style.opacity = '1'; }, 400);
     }
