@@ -151,6 +151,8 @@
         </div>
         <button onclick="forceV()">⚡ FORCE V-PATTERN</button>
         <button onclick="showReport()">📊 SESSION REPORT</button>
+        <button onclick="startCalibration()" id="btnCal" style="background:rgba(80,200,120,0.15);border-color:rgba(80,200,120,0.4)">🎯 CALIBRATE</button>
+        <button onclick="loadCalibration()" style="font-size:9px;padding:4px 8px;background:rgba(60,120,200,0.1)">↺ LOAD SAVED CAL</button>
       </div>
     </div>
   </div>
@@ -185,6 +187,22 @@
       <button onclick="checkPw()">ENTER</button>
       <button onclick="closeModal()" style="background:rgba(255,60,60,0.15)">CANCEL</button>
     </div>
+  </div>
+</div>
+
+<!-- Calibration overlay -->
+<div class="modal" id="calModal" style="z-index:999">
+  <div class="modal-box" style="width:340px;text-align:center">
+    <h3 id="calTitle">🎯 PERSONAL CALIBRATION</h3>
+    <div id="calInstructions" style="font-size:12px;color:#a0b8e8;margin:12px 0;line-height:1.6"></div>
+    <div style="position:relative;height:8px;background:rgba(100,140,255,0.15);border-radius:4px;margin:12px 0;overflow:hidden">
+      <div id="calBar" style="height:100%;width:0%;background:linear-gradient(90deg,#3060ff,#30c0ff);border-radius:4px;transition:width 0.3s"></div>
+    </div>
+    <div id="calTimer" style="font-size:22px;color:#6480cc;font-weight:bold;margin:8px 0">30</div>
+    <div id="calPhaseLabel" style="font-size:10px;color:#4060aa;letter-spacing:2px;margin-bottom:12px">PHASE 1/2 · RELAX</div>
+    <div id="calResult" style="display:none;font-size:11px;color:#80ffb0;text-align:left;background:rgba(0,255,100,0.05);border:1px solid rgba(0,255,100,0.2);border-radius:6px;padding:10px;margin-bottom:10px;line-height:1.8"></div>
+    <button id="calCloseBtn" style="display:none;background:rgba(80,200,120,0.2);border-color:rgba(80,200,120,0.4)" onclick="document.getElementById('calModal').classList.remove('show')">CLOSE</button>
+    <button onclick="document.getElementById('calModal').classList.remove('show')" style="background:rgba(255,60,60,0.1);margin-top:4px;font-size:10px" id="calCancelBtn">CANCEL</button>
   </div>
 </div>
 
@@ -284,6 +302,18 @@ function wsConnect() {
           document.getElementById('dtv').textContent = CFG.dt;
         }
         CFG.dataSource = 'ws';
+      } else if (d.type === 'calibration') {
+        _handleCalibration(d);
+      } else if (d.type === 'settings') {
+        // Server pushed updated settings (e.g. after calibration)
+        if (d.settings) {
+          CFG.thLow  = d.settings.thLow  ?? CFG.thLow;
+          CFG.thHigh = d.settings.thHigh ?? CFG.thHigh;
+          document.getElementById('thLow').value    = CFG.thLow;
+          document.getElementById('thHigh').value   = CFG.thHigh;
+          document.getElementById('tlv').textContent = CFG.thLow;
+          document.getElementById('thv').textContent = CFG.thHigh;
+        }
       } else if (d.type === 'meta') {
         console.log('[WS] DEAP meta:', d);
       } else if (d.type === 'done') {
@@ -880,6 +910,84 @@ function exportCSV() {
   a.download = `eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
   a.click();
 }
+
+// ── Calibration ───────────────────────────────────────────────────────────────
+const CAL = { active: false, phase: 'idle', totalSecs: 30, relax: 15, focus: 15 };
+
+function startCalibration() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('서버에 연결되어 있지 않습니다. WebSocket 연결을 확인하세요.');
+    return;
+  }
+  CAL.active = true;
+  CAL.phase  = 'relax';
+  document.getElementById('calResult').style.display = 'none';
+  document.getElementById('calCloseBtn').style.display = 'none';
+  document.getElementById('calCancelBtn').style.display = 'inline-block';
+  document.getElementById('calTitle').textContent = '🎯 PERSONAL CALIBRATION';
+  document.getElementById('calInstructions').textContent = '눈을 감고 편안하게 호흡하세요.\n긴장을 풀고 자연스럽게 쉬세요.';
+  document.getElementById('calPhaseLabel').textContent = 'PHASE 1/2 · RELAX';
+  document.getElementById('calTimer').textContent = CAL.relax;
+  document.getElementById('calBar').style.width = '0%';
+  document.getElementById('calModal').classList.add('show');
+  ws.send(JSON.stringify({ type: 'calibrate_start' }));
+}
+
+function loadCalibration() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'calibrate_load' }));
+}
+
+function _handleCalibration(d) {
+  const state = d.state || d.phase;
+
+  if (state === 'relax') {
+    const prog = d.progress || 0;
+    const rem  = Math.ceil(d.remaining || 0);
+    document.getElementById('calBar').style.width = (prog * 50) + '%';
+    document.getElementById('calTimer').textContent = rem;
+
+  } else if (d.transition || state === 'focus') {
+    CAL.phase = 'focus';
+    document.getElementById('calInstructions').textContent =
+      '집중하세요.\n속으로 숫자를 세거나 암산을 하세요.';
+    document.getElementById('calPhaseLabel').textContent = 'PHASE 2/2 · FOCUS';
+    if (d.progress !== undefined) {
+      const prog = d.progress || 0;
+      const rem  = Math.ceil(d.remaining || 0);
+      document.getElementById('calBar').style.width = (50 + prog * 50) + '%';
+      document.getElementById('calTimer').textContent = rem;
+    }
+
+  } else if (state === 'done') {
+    CAL.active = false;
+    document.getElementById('calBar').style.width = '100%';
+    document.getElementById('calTimer').textContent = '✓';
+    document.getElementById('calPhaseLabel').textContent = 'COMPLETE';
+    document.getElementById('calCancelBtn').style.display = 'none';
+    document.getElementById('calCloseBtn').style.display = 'inline-block';
+    if (d.result) {
+      const r  = d.result;
+      const t  = r.thresholds;
+      const q  = r.quality;
+      document.getElementById('calResult').style.display = 'block';
+      document.getElementById('calResult').innerHTML =
+        `휴식 집중도: <b>${r.relax.conc_mean}</b> ± ${r.relax.conc_std}<br>` +
+        `집중 집중도: <b>${r.focus.conc_mean}</b> ± ${r.focus.conc_std}<br>` +
+        `임계값: Low=<b>${t.th_low}</b>  High=<b>${t.th_high}</b>  Slope=<b>${t.slope}</b><br>` +
+        `품질: <b style="color:${q.grade==='A'?'#80ffb0':q.grade==='B'?'#80d0ff':'#ffb080'}">${q.grade}</b> (${q.score}/100)`;
+    } else if (state === 'loaded') {
+      document.getElementById('calModal').classList.remove('show');
+      // settings will be applied via separate settings message
+    }
+
+  } else if (state === 'not_found') {
+    alert('저장된 캘리브레이션이 없습니다. 먼저 캘리브레이션을 진행하세요.');
+  }
+}
+
+// Patch the existing onmessage to handle calibration messages
+const _origOnMsg = typeof onWsMessage === 'function' ? onWsMessage : null;
 </script>
 </body>
 </html>
