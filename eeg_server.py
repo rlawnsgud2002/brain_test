@@ -93,9 +93,11 @@ FRONTAL_IDX = [0, 1, 2, 3, 4, 5]
 STATE = {
     'channels': [50.0] * 14,
     'bands': {'delta': 30.0, 'theta': 40.0, 'alpha': 50.0,
-              'beta': 50.0, 'gamma': 30.0, 'concentration': 50.0},
+              'beta': 50.0, 'gamma': 30.0, 'concentration': 50.0,
+              'engagement_index': 0.5, 'faa': 0.0},
     'settings': {'thLow': 30, 'thHigh': 70, 'dt': 3, 'slope': 1.5},
-    'source': 'sim'
+    'source': 'sim',
+    'baseline': None,   # set after calibration: {'engagement_index': float}
 }
 
 def update_state(channels, bands):
@@ -195,8 +197,11 @@ def bandpower(signal, fs, fmin, fmax):
     mask = (freqs >= fmin) & (freqs <= fmax)
     return float(np.mean(psd[mask])) if mask.any() else 0.0
 
-def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50):
-    # Signal processing pipeline
+def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=None):
+    """
+    baseline: dict with keys 'alpha', 'theta', 'beta' (from calibration relax phase)
+              If provided, concentration is baseline-relative.
+    """
     artifacts = {'blinks': 0, 'rejected_ratio': 0.0}
     if apply_preprocess and NUMPY_OK:
         eeg_14ch, artifacts = preprocess(eeg_14ch, notch_hz=notch_hz)
@@ -208,27 +213,55 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50):
         b_alpha = bandpower(ch, fs, 8,  12)
         b_beta  = bandpower(ch, fs, 12, 30)
         b_gamma = bandpower(ch, fs, 30, 45)
-        ratios.append(b_beta / (b_alpha + 1e-9))
+        # Engagement Index: β/(α+θ) — more discriminating than β/α alone
+        ratios.append(b_beta / (b_alpha + b_theta + 1e-9))
         ch_bands.append((b_delta, b_theta, b_alpha, b_beta, b_gamma))
 
     mn, mx = min(ratios), max(ratios)
     norm = [(r-mn)/(mx-mn)*100 for r in ratios] if mx > mn else [50.0]*14
 
     avg = lambda i: float(np.mean([ch_bands[c][i] for c in range(14)]))
-    g_alpha, g_beta = avg(2), avg(3)
-    conc = float(np.clip((g_beta/(g_alpha+1e-9)-0.3)*40+50, 0, 100))
+    g_alpha = avg(2)
+    g_theta = avg(1)
+    g_beta  = avg(3)
+
+    # Engagement Index (global)
+    ei = g_beta / (g_alpha + g_theta + 1e-9)
+
+    # Baseline-relative concentration
+    if baseline:
+        b_ei = baseline.get('engagement_index', 0.5)
+        # Scale so that baseline EI → 30%, focused EI → 70%+
+        conc = float(np.clip((ei / (b_ei + 1e-9) - 0.5) * 60 + 50, 0, 100))
+    else:
+        conc = float(np.clip((ei - 0.3) * 60 + 50, 0, 100))
+
+    # Frontal Alpha Asymmetry: (F4_alpha - F3_alpha) / (F4_alpha + F3_alpha)
+    # EMOTIV_CHS: AF3=0,AF4=1,F7=2,F3=3,F4=4,F8=5 ...
+    f3_alpha  = bandpower(eeg_14ch[3], fs, 8, 12)  # F3
+    f4_alpha  = bandpower(eeg_14ch[4], fs, 8, 12)  # F4
+    faa_denom = f3_alpha + f4_alpha + 1e-9
+    faa       = round((f4_alpha - f3_alpha) / faa_denom, 3)  # −1..+1, +ve = approach/focus
+
+    # EMG proxy: high-frequency power (>40Hz) — flag if dominant
+    emg_l = bandpower(eeg_14ch[0], fs, 40, 45)   # AF3
+    emg_r = bandpower(eeg_14ch[1], fs, 40, 45)   # AF4
+    emg_ratio = (emg_l + emg_r) / (g_beta + 1e-9)
+    emg_warn  = bool(emg_ratio > 2.0)  # beta-range dominated by EMG-like noise
 
     return {
         'type': 'eeg',
         'channels': [round(v, 2) for v in norm],
-        'artifacts': artifacts,
+        'artifacts': {**artifacts, 'emg_warn': emg_warn},
         'bands': {
             'delta': round(avg(0)*1e6, 2),
-            'theta': round(avg(1)*1e6, 2),
+            'theta': round(g_theta*1e6, 2),
             'alpha': round(g_alpha*1e6, 2),
             'beta':  round(g_beta*1e6,  2),
             'gamma': round(avg(4)*1e6, 2),
-            'concentration': round(conc, 2)
+            'concentration': round(conc, 2),
+            'engagement_index': round(ei, 4),
+            'faa': faa,
         }
     }
 
@@ -288,6 +321,13 @@ async def _push_cal(ws, cal_holder, bands):
         await ws.send(json.dumps({'type': 'calibration', **status}))
         if state == 'done':
             STATE['settings'].update(cal.to_settings())
+            # Store relax-phase Engagement Index as baseline for relative concentration
+            r = cal._result or {}
+            rb = r.get('relax', {}).get('bands', {})
+            if rb:
+                ei_base = rb.get('beta', 1) / (rb.get('alpha', 1) + rb.get('theta', 1) + 1e-9)
+                STATE['baseline'] = {'engagement_index': round(ei_base, 4)}
+                print(f"[CAL] Baseline EI set: {STATE['baseline']['engagement_index']:.4f}")
             await ws.send(json.dumps({'type': 'settings', 'settings': STATE['settings']}))
             print(f"[CAL] {cal.summary()}")
     else:
@@ -334,7 +374,7 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
 
     for start in range(0, n - win, step):
         seg   = emotiv[:, start:start+win]
-        frame = compute_frame(seg, notch_hz=notch_hz,
+        frame = compute_frame(seg, notch_hz=notch_hz, baseline=STATE['baseline'],
                               apply_preprocess=not no_preprocess)
         frame['progress']  = round(start/n, 3)
         frame['timestamp'] = start/FS
@@ -652,7 +692,7 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
 
                 if len(buf[0]) >= WINDOW:
                     seg = np.array([buf[i][:WINDOW] for i in range(14)])
-                    frame = compute_frame(seg, fs=128)
+                    frame = compute_frame(seg, fs=128, baseline=STATE['baseline'])
                     update_state(frame['channels'], frame['bands'])
                     _add_vpattern(frame, detector, eeg_seg=seg)
                     if cal_holder:

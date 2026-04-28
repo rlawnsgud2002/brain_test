@@ -67,8 +67,13 @@
     <div class="panel-box">
       <div class="panel-title">CONCENTRATION</div>
       <div class="big-num" id="concNum" style="color:#a0c0ff">50%</div>
-      <div class="sub-label">BETA / ALPHA RATIO: <span id="baRatio">1.00</span></div>
+      <div class="sub-label">ENGAGEMENT INDEX: <span id="baRatio">0.50</span></div>
+      <div class="sub-label" style="font-size:9px;color:#4a6090">
+        FAA: <span id="faaVal">0.00</span>
+        <span id="faaLabel" style="margin-left:4px;color:#6480cc"></span>
+      </div>
       <div class="state-badge" id="stateBadge" style="background:rgba(100,140,255,0.2);color:#a0c0ff">IDLE</div>
+      <div id="emgWarn" style="display:none;font-size:9px;color:#ff8040;margin-top:4px;text-align:center">⚠ EMG ARTIFACT</div>
     </div>
     <div class="panel-box">
       <div class="panel-title">FREQUENCY BANDS</div>
@@ -302,9 +307,14 @@ function wsConnect() {
       if (d.type === 'eeg') {
         d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
         if (d.bands) {
-          bands.delta = d.bands.delta; bands.theta = d.bands.theta;
-          bands.alpha = d.bands.alpha; bands.beta  = d.bands.beta;
-          bands.gamma = d.bands.gamma;
+          bands.delta            = d.bands.delta;
+          bands.theta            = d.bands.theta;
+          bands.alpha            = d.bands.alpha;
+          bands.beta             = d.bands.beta;
+          bands.gamma            = d.bands.gamma;
+          bands.engagement_index = d.bands.engagement_index ?? null;
+          bands.faa              = d.bands.faa ?? null;
+          bands.emg_warn         = d.artifacts?.emg_warn ?? false;
         }
         CFG.dataSource = 'ws';
       } else if (d.type === 'state_snapshot') {
@@ -719,8 +729,19 @@ function update3D() {
 
 // ── UI UPDATE ─────────────────────────────────────────────
 function updateUI(avg) {
-  const ba = (0.5 + avg/200).toFixed(2);
   document.getElementById('concNum').textContent = Math.round(avg)+'%';
+  // Engagement Index
+  const ei = bands.engagement_index ?? (0.5 + avg/200);
+  document.getElementById('baRatio').textContent = (typeof ei === 'number' ? ei : 0).toFixed(3);
+  // FAA: Frontal Alpha Asymmetry
+  const faa = bands.faa ?? 0;
+  document.getElementById('faaVal').textContent = faa.toFixed(3);
+  const faaLbl = faa > 0.05 ? '↑ APPROACH' : faa < -0.05 ? '↓ WITHDRAW' : '─ NEUTRAL';
+  document.getElementById('faaLabel').textContent = faaLbl;
+  // EMG warning
+  const emgWarn = document.getElementById('emgWarn');
+  if (bands.emg_warn) emgWarn.style.display = 'block';
+  else emgWarn.style.display = 'none';
   const c = jet(avg/100);
   document.getElementById('concNum').style.color = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
   document.getElementById('baRatio').textContent = ba;
