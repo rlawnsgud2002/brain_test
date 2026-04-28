@@ -39,6 +39,12 @@ except ImportError:
     CAL_OK = False
 
 try:
+    from experiment import ExperimentRunner, PROTOCOLS
+    EXP_OK = True
+except ImportError:
+    EXP_OK = False
+
+try:
     import numpy as np
     from scipy.signal import welch, butter, filtfilt, iirnotch
     NUMPY_OK = True
@@ -246,6 +252,21 @@ def bands_to_14ch(delta, theta, alpha, beta, gamma, noise=6.0):
     return vals
 
 # ── DEAP Source ───────────────────────────────────────────────────────────────
+async def _tick_experiment(ws, exp_holder, bands):
+    """Advance experiment timer and send phase transitions/done to client."""
+    runner = exp_holder[0]
+    if runner is None or runner.done:
+        return
+    status = runner.tick(bands)
+    if status.get('transition') or status.get('state') == 'done':
+        await ws.send(json.dumps({'type': 'experiment', **status}))
+        if status.get('state') == 'done':
+            path = runner.save()
+            runner.export_csv(path.replace('.json', '.csv'))
+            await ws.send(json.dumps({'type': 'experiment', 'state': 'saved', 'path': path,
+                                      'summary': runner._summary()}))
+            print(f"[EXP] Experiment done. Saved → {path}")
+
 async def _push_cal(ws, cal_holder, bands):
     """Feed bands to active calibrator and send progress/result if changed."""
     cal = cal_holder[0]
@@ -272,7 +293,7 @@ def _add_vpattern(frame, detector, eeg_seg=None):
     frame['vpattern'] = result
 
 async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preprocess=False,
-                      detector=None, cal_holder=None):
+                      detector=None, cal_holder=None, exp_holder=None):
     print(f"[DEAP] Loading {dat_file}, trial={trial}, speed={speed}x")
     with open(dat_file, 'rb') as f:
         data = pickle.load(f, encoding='latin1')
@@ -304,6 +325,8 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
         update_state(frame['channels'], frame['bands'])
         if cal_holder:
             await _push_cal(ws, cal_holder, frame['bands'])
+        if exp_holder:
+            await _tick_experiment(ws, exp_holder, frame['bands'])
         try:
             await ws.send(json.dumps(frame))
             await asyncio.sleep(interval)
@@ -314,7 +337,7 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
     print(f"[DEAP] Trial {trial} finished")
 
 # ── Mental State CSV Source ───────────────────────────────────────────────────
-async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None):
+async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None, exp_holder=None):
     """
     Kaggle EEG Brainwave Dataset - Mental State
     Columns: attention, mediation, delta, theta, lowAlpha, highAlpha,
@@ -414,6 +437,8 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None)
         _add_vpattern(frame, detector)
         if cal_holder:
             await _push_cal(ws, cal_holder, frame['bands'])
+        if exp_holder:
+            await _tick_experiment(ws, exp_holder, frame['bands'])
 
         try:
             await ws.send(json.dumps(frame))
@@ -425,7 +450,7 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None)
     print("[MENTAL] Finished playback")
 
 # ── Simulation Source ─────────────────────────────────────────────────────────
-async def stream_sim(ws, detector=None, cal_holder=None):
+async def stream_sim(ws, detector=None, cal_holder=None, exp_holder=None):
     print("[SIM] Starting simulation stream")
     vals = [50.0] * 14
     t    = 0.0
@@ -450,6 +475,8 @@ async def stream_sim(ws, detector=None, cal_holder=None):
         _add_vpattern(frame, detector)
         if cal_holder:
             await _push_cal(ws, cal_holder, b)
+        if exp_holder:
+            await _tick_experiment(ws, exp_holder, b)
         try:
             await ws.send(json.dumps(frame))
             await asyncio.sleep(0.1)
@@ -457,7 +484,7 @@ async def stream_sim(ws, detector=None, cal_holder=None):
             break
 
 # ── Emotiv EPOC X — Cortex API ────────────────────────────────────────────────
-async def stream_emotiv(ws, detector=None, cal_holder=None):
+async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
     """
     Connects to Emotiv Cortex API at wss://localhost:6868.
     Requires: Emotiv App running + pip install websockets
@@ -569,6 +596,8 @@ async def stream_emotiv(ws, detector=None, cal_holder=None):
                     _add_vpattern(frame, detector, eeg_seg=seg)
                     if cal_holder:
                         await _push_cal(ws, cal_holder, frame['bands'])
+                    if exp_holder:
+                        await _tick_experiment(ws, exp_holder, frame['bands'])
                     try:
                         await ws.send(json.dumps(frame))
                     except websockets.exceptions.ConnectionClosed:
@@ -589,10 +618,12 @@ async def stream_emotiv(ws, detector=None, cal_holder=None):
             'fallback':'sim'}))
         await stream_sim(ws)
 
-# ── Settings + Calibration receiver ──────────────────────────────────────────
-def _make_recv(ws, calibrator_holder):
+# ── Settings + Calibration + Experiment receiver ──────────────────────────────
+def _make_recv(ws, calibrator_holder, exp_holder):
     """
-    calibrator_holder is a list[Calibrator|None] so recv coroutine can mutate it.
+    calibrator_holder : list[Calibrator|None]
+    exp_holder        : list[ExperimentRunner|None]
+    Both are mutable via list so recv coroutine can update them.
     """
     async def recv_loop():
         try:
@@ -610,8 +641,7 @@ def _make_recv(ws, calibrator_holder):
                             cal = Calibrator()
                             calibrator_holder[0] = cal
                             status = cal.start()
-                            await ws.send(json.dumps(
-                                {'type': 'calibration', **status}))
+                            await ws.send(json.dumps({'type': 'calibration', **status}))
                             print("[CAL] Calibration started")
                         else:
                             await ws.send(json.dumps(
@@ -630,6 +660,49 @@ def _make_recv(ws, calibrator_holder):
                             else:
                                 await ws.send(json.dumps(
                                     {'type': 'calibration', 'state': 'not_found'}))
+
+                    elif msg_type == 'exp_start':
+                        if EXP_OK:
+                            protocol = d.get('protocol', 'short')
+                            runner = ExperimentRunner(protocol=protocol)
+                            exp_holder[0] = runner
+                            status = runner.start()
+                            await ws.send(json.dumps({'type': 'experiment', **status}))
+                            print(f"[EXP] Started protocol='{protocol}' "
+                                  f"({runner.total_duration()}s)")
+                        else:
+                            await ws.send(json.dumps(
+                                {'type': 'error', 'message': 'experiment module not found'}))
+
+                    elif msg_type == 'exp_stop':
+                        runner = exp_holder[0]
+                        if runner and not runner.done:
+                            runner._state = 'stopped'
+                            runner.done   = True
+                            path = runner.save()
+                            await ws.send(json.dumps(
+                                {'type': 'experiment', 'state': 'stopped',
+                                 'saved': path, 'summary': runner._summary()}))
+
+                    elif msg_type == 'exp_marker':
+                        runner = exp_holder[0]
+                        if runner and not runner.done:
+                            label  = d.get('label', 'manual')
+                            marker = runner.add_marker(label, STATE['bands'])
+                            await ws.send(json.dumps(
+                                {'type': 'exp_marker_ack', **marker}))
+                            print(f"[EXP] Marker: {label} @ {marker['elapsed']}s")
+
+                    elif msg_type == 'exp_protocols':
+                        await ws.send(json.dumps({
+                            'type': 'exp_protocols',
+                            'protocols': {
+                                k: [{'name': p.name, 'duration': p.duration,
+                                     'phase_type': p.phase_type}
+                                    for p in phases]
+                                for k, phases in (PROTOCOLS.items() if EXP_OK else {})
+                            }
+                        }))
 
                 except Exception:
                     pass
@@ -654,8 +727,8 @@ def make_handler(source, dat_file, trial, speed,
         peer = ws.remote_address
         print(f"[WS] Client connected: {peer}")
 
-        # calibrator_holder[0] is mutated by recv_loop when user starts calibration
         calibrator_holder = [_startup_cal]
+        exp_holder        = [None]          # active ExperimentRunner
 
         await ws.send(json.dumps({
             'type': 'state_snapshot',
@@ -666,7 +739,7 @@ def make_handler(source, dat_file, trial, speed,
             'calibrated': _startup_cal is not None,
         }))
 
-        recv_loop = _make_recv(ws, calibrator_holder)
+        recv_loop = _make_recv(ws, calibrator_holder, exp_holder)
         recv_task = asyncio.create_task(recv_loop())
 
         async def stream_with_cal(stream_coro):
@@ -683,17 +756,21 @@ def make_handler(source, dat_file, trial, speed,
                     return
                 await stream_deap(ws, dat_file, trial, speed,
                                   notch_hz=notch_hz, no_preprocess=no_preprocess,
-                                  detector=detector, cal_holder=calibrator_holder)
+                                  detector=detector, cal_holder=calibrator_holder,
+                                  exp_holder=exp_holder)
             elif source == 'mental':
                 if not dat_file:
                     await ws.send(json.dumps({'type':'error','message':'--file not specified'}))
                     return
                 await stream_mental(ws, dat_file, speed,
-                                    detector=detector, cal_holder=calibrator_holder)
+                                    detector=detector, cal_holder=calibrator_holder,
+                                    exp_holder=exp_holder)
             elif source == 'emotiv':
-                await stream_emotiv(ws, detector=detector, cal_holder=calibrator_holder)
+                await stream_emotiv(ws, detector=detector, cal_holder=calibrator_holder,
+                                    exp_holder=exp_holder)
             else:
-                await stream_sim(ws, detector=detector, cal_holder=calibrator_holder)
+                await stream_sim(ws, detector=detector, cal_holder=calibrator_holder,
+                                 exp_holder=exp_holder)
         except Exception as e:
             print(f"[WS] Error: {e}")
         finally:

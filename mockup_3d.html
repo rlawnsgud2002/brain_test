@@ -153,9 +153,33 @@
         <button onclick="showReport()">📊 SESSION REPORT</button>
         <button onclick="startCalibration()" id="btnCal" style="background:rgba(80,200,120,0.15);border-color:rgba(80,200,120,0.4)">🎯 CALIBRATE</button>
         <button onclick="loadCalibration()" style="font-size:9px;padding:4px 8px;background:rgba(60,120,200,0.1)">↺ LOAD SAVED CAL</button>
+        <hr style="border-color:rgba(100,140,255,0.15);margin:6px 0">
+        <div style="font-size:9px;color:#4060aa;letter-spacing:1px;margin-bottom:4px">EXPERIMENT PROTOCOL</div>
+        <select id="expProtocolSel" style="width:100%;margin-bottom:4px;font-size:10px">
+          <option value="short">SHORT (6min)</option>
+          <option value="standard">STANDARD (15min)</option>
+          <option value="quick">QUICK TEST (80s)</option>
+        </select>
+        <button onclick="startExperiment()" id="btnExp" style="background:rgba(200,120,40,0.15);border-color:rgba(200,120,40,0.4)">▶ START EXPERIMENT</button>
+        <button onclick="stopExperiment()" id="btnExpStop" style="display:none;background:rgba(255,60,60,0.15);border-color:rgba(255,60,60,0.3);font-size:10px">■ STOP</button>
+        <button onclick="addManualMarker()" id="btnMarker" style="display:none;background:rgba(255,200,50,0.1);border-color:rgba(255,200,50,0.3)" title="Keyboard: Space">📍 MARK EVENT</button>
       </div>
     </div>
   </div>
+</div>
+
+<!-- Experiment phase bar (top of screen) -->
+<div id="expBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:200;pointer-events:none">
+  <div style="background:rgba(5,8,16,0.9);padding:6px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(100,140,255,0.2)">
+    <span id="expPhaseName" style="font-size:10px;letter-spacing:2px;color:#6480cc;min-width:80px">BASELINE</span>
+    <div style="flex:1;height:4px;background:rgba(100,140,255,0.1);border-radius:2px;overflow:hidden">
+      <div id="expProgressBar" style="height:100%;width:0%;border-radius:2px;transition:width 1s linear"></div>
+    </div>
+    <span id="expTimer" style="font-size:12px;color:#a0b8ff;min-width:40px;text-align:right">0s</span>
+    <span id="expPhaseCount" style="font-size:9px;color:#4060aa">1/4</span>
+    <span style="font-size:9px;color:#4060aa;cursor:pointer;pointer-events:all" onclick="addManualMarker()">📍 [SPACE]</span>
+  </div>
+  <div id="expInstruction" style="background:rgba(5,8,16,0.75);padding:4px 16px;font-size:11px;color:#80a0d0;text-align:center;border-bottom:1px solid rgba(100,140,255,0.1)"></div>
 </div>
 
 <div id="tooltip"><div class="t-name"></div><div class="t-val"></div></div>
@@ -304,6 +328,10 @@ function wsConnect() {
         CFG.dataSource = 'ws';
       } else if (d.type === 'calibration') {
         _handleCalibration(d);
+      } else if (d.type === 'experiment') {
+        _handleExperiment(d);
+      } else if (d.type === 'exp_marker_ack') {
+        console.log('[EXP] Marker ack:', d.label, '@', d.elapsed, 's');
       } else if (d.type === 'settings') {
         // Server pushed updated settings (e.g. after calibration)
         if (d.settings) {
@@ -983,6 +1011,108 @@ function _handleCalibration(d) {
 
   } else if (state === 'not_found') {
     alert('저장된 캘리브레이션이 없습니다. 먼저 캘리브레이션을 진행하세요.');
+  }
+}
+
+// ── Experiment Protocol ───────────────────────────────────────────────────────
+const EXP = { active: false, phaseIdx: 0, phaseTotal: 1, markerCount: 0 };
+
+function startExperiment() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('서버에 연결되어 있지 않습니다.');
+    return;
+  }
+  const protocol = document.getElementById('expProtocolSel').value;
+  EXP.active = true;
+  EXP.markerCount = 0;
+  document.getElementById('btnExp').style.display     = 'none';
+  document.getElementById('btnExpStop').style.display = 'inline-block';
+  document.getElementById('btnMarker').style.display  = 'inline-block';
+  document.getElementById('expBar').style.display     = 'block';
+  ws.send(JSON.stringify({ type: 'exp_start', protocol }));
+}
+
+function stopExperiment() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'exp_stop' }));
+  _expDone();
+}
+
+function addManualMarker() {
+  if (!EXP.active || !ws || ws.readyState !== WebSocket.OPEN) return;
+  EXP.markerCount++;
+  ws.send(JSON.stringify({ type: 'exp_marker', label: `marker_${EXP.markerCount}` }));
+  // Flash the marker button
+  const btn = document.getElementById('btnMarker');
+  btn.style.background = 'rgba(255,200,50,0.4)';
+  setTimeout(() => { btn.style.background = 'rgba(255,200,50,0.1)'; }, 300);
+}
+
+// Keyboard shortcut: Space = manual marker
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && EXP.active && document.activeElement.tagName !== 'INPUT') {
+    e.preventDefault();
+    addManualMarker();
+  }
+});
+
+function _expDone() {
+  EXP.active = false;
+  document.getElementById('btnExp').style.display     = 'inline-block';
+  document.getElementById('btnExpStop').style.display = 'none';
+  document.getElementById('btnMarker').style.display  = 'none';
+  document.getElementById('expBar').style.display     = 'none';
+  document.body.style.borderTop = '';
+}
+
+function _handleExperiment(d) {
+  const state = d.state;
+
+  if (state === 'running' || d.phase) {
+    // Update phase bar
+    const bar   = document.getElementById('expProgressBar');
+    const timer = document.getElementById('expTimer');
+    const phase = document.getElementById('expPhaseName');
+    const count = document.getElementById('expPhaseCount');
+    const instr = document.getElementById('expInstruction');
+
+    if (d.phase)       phase.textContent = d.phase;
+    if (d.instruction) instr.textContent = d.instruction;
+    if (d.color)       bar.style.background = d.color;
+
+    const progress = d.phase_progress || 0;
+    const totalProg = ((d.phase_idx || 0) + progress) / (d.phase_total || 1);
+    bar.style.width = (totalProg * 100) + '%';
+
+    if (d.remaining !== undefined)
+      timer.textContent = Math.ceil(d.remaining) + 's';
+    if (d.phase_idx !== undefined)
+      count.textContent = `${d.phase_idx + 1}/${d.phase_total}`;
+
+    // Color-code the top border by phase type
+    const typeColors = { baseline: '#204080', relax: '#2060b0',
+                         task: '#b04020', rest: '#204060' };
+    document.body.style.borderTop =
+      `2px solid ${typeColors[d.phase_type] || '#3060ff'}`;
+
+    if (d.transition) {
+      // Flash transition
+      document.getElementById('expBar').style.opacity = '0.5';
+      setTimeout(() => { document.getElementById('expBar').style.opacity = '1'; }, 400);
+    }
+
+  } else if (state === 'done' || state === 'stopped') {
+    _expDone();
+    if (d.summary) {
+      const s = d.summary;
+      const lines = Object.entries(s.phase_stats || {}).map(
+        ([k,v]) => `${k}: ${v.mean_concentration}% avg (${v.n_samples} samples)`
+      ).join('\n');
+      alert(`실험 완료!\n\n${lines}\n\n마커: ${s.n_markers}개, V-패턴: ${s.n_vpattern}개`);
+    }
+
+  } else if (state === 'saved') {
+    console.log('[EXP] Saved:', d.path);
   }
 }
 
