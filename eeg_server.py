@@ -28,7 +28,7 @@ from typing import Optional
 
 try:
     import numpy as np
-    from scipy.signal import welch
+    from scipy.signal import welch, butter, filtfilt, iirnotch
     NUMPY_OK = True
 except ImportError:
     NUMPY_OK = False
@@ -67,6 +67,10 @@ FS = 128
 # (frontal electrodes more sensitive to beta/concentration)
 SPATIAL_W = [1.2,1.2, 1.1,1.1,1.1,1.1, 1.0,1.0, 0.8,0.8, 0.7,0.7, 0.6,0.6]
 
+# Frontal electrode indices (AF3=0, AF4=1, F7=2, F3=3, F4=4, F8=5)
+# used for eye-blink detection
+FRONTAL_IDX = [0, 1, 2, 3, 4, 5]
+
 # ── Global State ──────────────────────────────────────────────────────────────
 STATE = {
     'channels': [50.0] * 14,
@@ -81,13 +85,104 @@ def update_state(channels, bands):
     STATE['bands'] = bands
 
 # ── Signal Processing ─────────────────────────────────────────────────────────
+
+# Pre-build filters once (avoids recomputing per frame)
+def _make_filters(fs):
+    # Bandpass 1-45 Hz (removes DC drift + high-freq noise)
+    b_bp, a_bp = butter(4, [1.0/(fs/2), 45.0/(fs/2)], btype='band')
+    # Notch 50 Hz (EU power line) — change to 60.0 for US/JP
+    b_n50, a_n50 = iirnotch(50.0, Q=30, fs=fs)
+    # Notch 60 Hz (US power line)
+    b_n60, a_n60 = iirnotch(60.0, Q=30, fs=fs)
+    return (b_bp, a_bp), (b_n50, a_n50), (b_n60, a_n60)
+
+_FILTERS = None  # initialized on first use
+
+def get_filters():
+    global _FILTERS
+    if _FILTERS is None:
+        _FILTERS = _make_filters(FS)
+    return _FILTERS
+
+def preprocess(eeg_14ch, notch_hz=50, blink_thresh_uv=80.0):
+    """
+    Signal processing pipeline applied to raw EEG before band-power extraction.
+
+    Steps:
+      1. Bandpass filter  1-45 Hz  (removes DC + EMG noise)
+      2. Notch filter     50/60 Hz (removes power-line interference)
+      3. Eye-blink rejection       (interpolate blink segments on frontal ch)
+
+    Args:
+      eeg_14ch      : np.ndarray (14, n_samples) raw EEG in μV
+      notch_hz      : 50 (EU) or 60 (US) power-line frequency
+      blink_thresh_uv: amplitude threshold for blink detection (μV)
+
+    Returns:
+      clean         : np.ndarray (14, n_samples) cleaned EEG
+      artifacts     : dict with blink count and rejected sample ratio
+    """
+    (b_bp, a_bp), (b_n50, a_n50), (b_n60, a_n60) = get_filters()
+    n_samples = eeg_14ch.shape[1]
+    clean = np.empty_like(eeg_14ch, dtype=float)
+
+    # Need at least 3× filter order samples for filtfilt
+    min_len = 13  # 4th-order butter → padlen = 12
+    if n_samples < min_len:
+        return eeg_14ch.astype(float), {'blinks': 0, 'rejected_ratio': 0.0}
+
+    for i, ch in enumerate(eeg_14ch):
+        sig = ch.astype(float)
+        # 1. Bandpass
+        sig = filtfilt(b_bp, a_bp, sig)
+        # 2. Notch
+        if notch_hz == 60:
+            sig = filtfilt(b_n60, a_n60, sig)
+        else:
+            sig = filtfilt(b_n50, a_n50, sig)
+        clean[i] = sig
+
+    # 3. Eye-blink rejection on frontal channels
+    # Blinks appear as large-amplitude, short-duration (~200ms) spikes
+    blink_win  = max(1, int(FS * 0.2))   # 200 ms window
+    blink_count   = 0
+    rejected_samp = 0
+
+    for fi in FRONTAL_IDX:
+        sig = clean[fi]
+        t = 0
+        while t < n_samples - blink_win:
+            segment = sig[t:t + blink_win]
+            if np.max(np.abs(segment)) > blink_thresh_uv:
+                # Mark blink window — interpolate linearly across it
+                start = max(0, t - 2)
+                end   = min(n_samples - 1, t + blink_win + 2)
+                # Use edge values for linear interpolation
+                v0 = sig[start]
+                v1 = sig[end]
+                interp = np.linspace(v0, v1, end - start)
+                clean[fi, start:end] = interp
+                blink_count  += 1
+                rejected_samp += blink_win
+                t += blink_win  # skip past this blink
+            else:
+                t += 1
+
+    rejected_ratio = round(rejected_samp / (n_samples * len(FRONTAL_IDX) + 1e-9), 3)
+    return clean, {'blinks': blink_count, 'rejected_ratio': rejected_ratio}
+
 def bandpower(signal, fs, fmin, fmax):
     nperseg = min(len(signal), fs * 2)
     freqs, psd = welch(signal, fs=fs, nperseg=nperseg)
     mask = (freqs >= fmin) & (freqs <= fmax)
     return float(np.mean(psd[mask])) if mask.any() else 0.0
 
-def compute_frame(eeg_14ch, fs=FS):
+def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50):
+    # Signal processing pipeline
+    artifacts = {'blinks': 0, 'rejected_ratio': 0.0}
+    if apply_preprocess and NUMPY_OK:
+        eeg_14ch, artifacts = preprocess(eeg_14ch, notch_hz=notch_hz)
+
     ratios, ch_bands = [], []
     for ch in eeg_14ch:
         b_delta = bandpower(ch, fs, 1,  4)
@@ -108,6 +203,7 @@ def compute_frame(eeg_14ch, fs=FS):
     return {
         'type': 'eeg',
         'channels': [round(v, 2) for v in norm],
+        'artifacts': artifacts,
         'bands': {
             'delta': round(avg(0)*1e6, 2),
             'theta': round(avg(1)*1e6, 2),
@@ -138,7 +234,7 @@ def bands_to_14ch(delta, theta, alpha, beta, gamma, noise=6.0):
     return vals
 
 # ── DEAP Source ───────────────────────────────────────────────────────────────
-async def stream_deap(ws, dat_file, trial=0, speed=1.0):
+async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preprocess=False):
     print(f"[DEAP] Loading {dat_file}, trial={trial}, speed={speed}x")
     with open(dat_file, 'rb') as f:
         data = pickle.load(f, encoding='latin1')
@@ -162,7 +258,8 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0):
 
     for start in range(0, n - win, step):
         seg   = emotiv[:, start:start+win]
-        frame = compute_frame(seg)
+        frame = compute_frame(seg, notch_hz=notch_hz,
+                              apply_preprocess=not no_preprocess)
         frame['progress']  = round(start/n, 3)
         frame['timestamp'] = start/FS
         update_state(frame['channels'], frame['bands'])
@@ -458,7 +555,7 @@ async def recv_settings(ws):
         pass
 
 # ── Handler ───────────────────────────────────────────────────────────────────
-def make_handler(source, dat_file, trial, speed):
+def make_handler(source, dat_file, trial, speed, notch_hz=50, no_preprocess=False):
     STATE['source'] = source
 
     async def handler(ws, path='/'):
@@ -480,7 +577,8 @@ def make_handler(source, dat_file, trial, speed):
                 if not dat_file:
                     await ws.send(json.dumps({'type':'error','message':'--file not specified'}))
                     return
-                await stream_deap(ws, dat_file, trial, speed)
+                await stream_deap(ws, dat_file, trial, speed,
+                                  notch_hz=notch_hz, no_preprocess=no_preprocess)
             elif source == 'mental':
                 if not dat_file:
                     await ws.send(json.dumps({'type':'error','message':'--file not specified'}))
@@ -511,6 +609,10 @@ def main():
     parser.add_argument('--trial', type=int,   default=0,   help='DEAP trial index (0-39)')
     parser.add_argument('--speed', type=float, default=1.0, help='Playback speed multiplier')
     parser.add_argument('--port',  type=int,   default=8765, help='WebSocket port')
+    parser.add_argument('--notch', type=int,   default=50,  choices=[50,60],
+                        help='Power-line notch frequency: 50 (EU, default) or 60 (US/JP)')
+    parser.add_argument('--no-preprocess', action='store_true',
+                        help='Disable bandpass/notch/blink filters (raw signal)')
     args = parser.parse_args()
 
     if not NUMPY_OK and args.source in ('deap','mental'):
@@ -520,18 +622,23 @@ def main():
         print("[ERROR] pandas required. pip install pandas")
         return
 
-    handler = make_handler(args.source, args.file, args.trial, args.speed)
+    handler = make_handler(args.source, args.file, args.trial, args.speed,
+                           notch_hz=args.notch, no_preprocess=args.no_preprocess)
 
     print("=" * 60)
     print(" EEG WebSocket Server")
-    print(f"  URL    : ws://localhost:{args.port}")
-    print(f"  Source : {args.source.upper()}")
+    print(f"  URL        : ws://localhost:{args.port}")
+    print(f"  Source     : {args.source.upper()}")
     if args.file:
-        print(f"  File   : {args.file}")
+        print(f"  File       : {args.file}")
     if args.source in ('deap','mental'):
-        print(f"  Speed  : {args.speed}x")
+        print(f"  Speed      : {args.speed}x")
     if args.source == 'deap':
-        print(f"  Trial  : {args.trial}")
+        print(f"  Trial      : {args.trial}")
+    if not args.no_preprocess:
+        print(f"  Preprocess : bandpass(1-45Hz) + notch({args.notch}Hz) + blink rejection")
+    else:
+        print(f"  Preprocess : DISABLED (raw signal)")
     print("=" * 60)
     if args.source == 'emotiv':
         print(" NOTE: Requires Emotiv App running + Client ID/Secret")
