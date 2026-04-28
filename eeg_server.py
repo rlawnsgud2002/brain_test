@@ -27,6 +27,12 @@ import time
 from typing import Optional
 
 try:
+    from eeg_model import make_detector
+    MODEL_OK = True
+except ImportError:
+    MODEL_OK = False
+
+try:
     import numpy as np
     from scipy.signal import welch, butter, filtfilt, iirnotch
     NUMPY_OK = True
@@ -234,7 +240,19 @@ def bands_to_14ch(delta, theta, alpha, beta, gamma, noise=6.0):
     return vals
 
 # ── DEAP Source ───────────────────────────────────────────────────────────────
-async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preprocess=False):
+def _add_vpattern(frame, detector, eeg_seg=None):
+    """Attach V-pattern detection result to a frame dict in-place."""
+    if detector is None:
+        return
+    conc = frame.get('bands', {}).get('concentration', 50.0)
+    if eeg_seg is not None and hasattr(detector, 'push') and hasattr(detector, '_ring'):
+        result = detector.push(eeg_seg, conc)
+    else:
+        result = detector.push(conc) if hasattr(detector, '_buf') else detector.push(eeg_seg, conc)
+    frame['vpattern'] = result
+
+async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preprocess=False,
+                      detector=None):
     print(f"[DEAP] Loading {dat_file}, trial={trial}, speed={speed}x")
     with open(dat_file, 'rb') as f:
         data = pickle.load(f, encoding='latin1')
@@ -262,6 +280,7 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
                               apply_preprocess=not no_preprocess)
         frame['progress']  = round(start/n, 3)
         frame['timestamp'] = start/FS
+        _add_vpattern(frame, detector, eeg_seg=seg)
         update_state(frame['channels'], frame['bands'])
         try:
             await ws.send(json.dumps(frame))
@@ -273,7 +292,7 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
     print(f"[DEAP] Trial {trial} finished")
 
 # ── Mental State CSV Source ───────────────────────────────────────────────────
-async def stream_mental(ws, csv_file, speed=1.0):
+async def stream_mental(ws, csv_file, speed=1.0, detector=None):
     """
     Kaggle EEG Brainwave Dataset - Mental State
     Columns: attention, mediation, delta, theta, lowAlpha, highAlpha,
@@ -370,6 +389,7 @@ async def stream_mental(ws, csv_file, speed=1.0):
             'label': label_names.get(lbl, 'UNKNOWN')
         }
         update_state(frame['channels'], frame['bands'])
+        _add_vpattern(frame, detector)
 
         try:
             await ws.send(json.dumps(frame))
@@ -381,7 +401,7 @@ async def stream_mental(ws, csv_file, speed=1.0):
     print("[MENTAL] Finished playback")
 
 # ── Simulation Source ─────────────────────────────────────────────────────────
-async def stream_sim(ws):
+async def stream_sim(ws, detector=None):
     print("[SIM] Starting simulation stream")
     vals = [50.0] * 14
     t    = 0.0
@@ -401,17 +421,17 @@ async def stream_sim(ws):
             'concentration': round(avg, 2)
         }
         update_state(vals, b)
+        frame = {'type': 'eeg', 'channels': STATE['channels'],
+                 'bands': b, 'progress': -1, 'timestamp': round(t, 2)}
+        _add_vpattern(frame, detector)
         try:
-            await ws.send(json.dumps({
-                'type': 'eeg', 'channels': STATE['channels'],
-                'bands': b, 'progress': -1, 'timestamp': round(t, 2)
-            }))
+            await ws.send(json.dumps(frame))
             await asyncio.sleep(0.1)
         except websockets.exceptions.ConnectionClosed:
             break
 
 # ── Emotiv EPOC X — Cortex API ────────────────────────────────────────────────
-async def stream_emotiv(ws):
+async def stream_emotiv(ws, detector=None):
     """
     Connects to Emotiv Cortex API at wss://localhost:6868.
     Requires: Emotiv App running + pip install websockets
@@ -520,6 +540,7 @@ async def stream_emotiv(ws):
                     seg = np.array([buf[i][:WINDOW] for i in range(14)])
                     frame = compute_frame(seg, fs=128)
                     update_state(frame['channels'], frame['bands'])
+                    _add_vpattern(frame, detector, eeg_seg=seg)
                     try:
                         await ws.send(json.dumps(frame))
                     except websockets.exceptions.ConnectionClosed:
@@ -555,8 +576,10 @@ async def recv_settings(ws):
         pass
 
 # ── Handler ───────────────────────────────────────────────────────────────────
-def make_handler(source, dat_file, trial, speed, notch_hz=50, no_preprocess=False):
+def make_handler(source, dat_file, trial, speed,
+                 notch_hz=50, no_preprocess=False, model_path='models/vpattern_model.pt'):
     STATE['source'] = source
+    detector = make_detector(model_path) if MODEL_OK else None
 
     async def handler(ws, path='/'):
         peer = ws.remote_address
@@ -578,16 +601,17 @@ def make_handler(source, dat_file, trial, speed, notch_hz=50, no_preprocess=Fals
                     await ws.send(json.dumps({'type':'error','message':'--file not specified'}))
                     return
                 await stream_deap(ws, dat_file, trial, speed,
-                                  notch_hz=notch_hz, no_preprocess=no_preprocess)
+                                  notch_hz=notch_hz, no_preprocess=no_preprocess,
+                                  detector=detector)
             elif source == 'mental':
                 if not dat_file:
                     await ws.send(json.dumps({'type':'error','message':'--file not specified'}))
                     return
-                await stream_mental(ws, dat_file, speed)
+                await stream_mental(ws, dat_file, speed, detector=detector)
             elif source == 'emotiv':
-                await stream_emotiv(ws)
+                await stream_emotiv(ws, detector=detector)
             else:
-                await stream_sim(ws)
+                await stream_sim(ws, detector=detector)
         except Exception as e:
             print(f"[WS] Error: {e}")
         finally:
@@ -613,6 +637,8 @@ def main():
                         help='Power-line notch frequency: 50 (EU, default) or 60 (US/JP)')
     parser.add_argument('--no-preprocess', action='store_true',
                         help='Disable bandpass/notch/blink filters (raw signal)')
+    parser.add_argument('--model', default='models/vpattern_model.pt',
+                        help='Path to trained V-pattern model (default: models/vpattern_model.pt)')
     args = parser.parse_args()
 
     if not NUMPY_OK and args.source in ('deap','mental'):
@@ -623,7 +649,8 @@ def main():
         return
 
     handler = make_handler(args.source, args.file, args.trial, args.speed,
-                           notch_hz=args.notch, no_preprocess=args.no_preprocess)
+                           notch_hz=args.notch, no_preprocess=args.no_preprocess,
+                           model_path=args.model)
 
     print("=" * 60)
     print(" EEG WebSocket Server")
