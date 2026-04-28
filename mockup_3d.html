@@ -315,7 +315,13 @@ function wsConnect() {
           bands.engagement_index = d.bands.engagement_index ?? null;
           bands.faa              = d.bands.faa ?? null;
           bands.emg_warn         = d.artifacts?.emg_warn ?? false;
+          bands.concentration    = d.bands.concentration ?? null;
         }
+        // V-pattern: 서버 ML/rule 감지 → rising edge에서만 toggleControl 호출
+        if (d.vpattern?.v_active && !CFG._lastVActive) {
+          toggleControl(d.bands?.concentration ?? 50);
+        }
+        CFG._lastVActive = d.vpattern?.v_active ?? false;
         CFG.dataSource = 'ws';
       } else if (d.type === 'state_snapshot') {
         d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
@@ -744,7 +750,6 @@ function updateUI(avg) {
   else emgWarn.style.display = 'none';
   const c = jet(avg/100);
   document.getElementById('concNum').style.color = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
-  document.getElementById('baRatio').textContent = ba;
 
   const badge = document.getElementById('stateBadge');
   if (avg < CFG.thLow) {
@@ -895,9 +900,13 @@ function updateManual() {
   document.getElementById('mv').textContent = CFG.manVal;
 }
 function forceV() {
-  vPhase = { step: 0, total: 80 };
-  CFG.manual = false;
-  document.getElementById('manSlider').value = 50;
+  if (CFG.dataSource === 'ws') {
+    toggleControl(bands.concentration ?? 50);
+  } else {
+    vPhase = { step: 0, total: 80 };
+    CFG.manual = false;
+    document.getElementById('manSlider').value = 50;
+  }
 }
 
 // ── SESSION REPORT (D) ────────────────────────────────────
