@@ -340,9 +340,9 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
 async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None, exp_holder=None):
     """
     Kaggle EEG Brainwave Dataset - Mental State
-    Columns: attention, mediation, delta, theta, lowAlpha, highAlpha,
-             lowBeta, highBeta, lowGamma, highGamma, label
-    label: 0=focused, 1=unfocused, 2=drowsy  (or string variants)
+    Supports two column formats:
+      A) Simple band power : delta, theta, lowAlpha/highAlpha, lowBeta/highBeta, label
+      B) Frequency bins    : freq_XXX_N (Hz×10 encoded), Label
     """
     if not PANDAS_OK:
         await ws.send(json.dumps({'type':'error','message':'pandas required: pip install pandas'}))
@@ -350,46 +350,78 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
 
     print(f"[MENTAL] Loading {csv_file}, speed={speed}x")
     df = pd.read_csv(csv_file)
-    print(f"[MENTAL] Columns: {list(df.columns)}")
-    print(f"[MENTAL] Rows: {len(df)}")
+    print(f"[MENTAL] Rows: {len(df)}, Columns: {len(df.columns)}")
 
-    # Normalize column names (lowercase, strip spaces)
+    # Normalize column names
     df.columns = [c.strip().lower() for c in df.columns]
 
-    # Detect band power columns
     def find_col(candidates):
         for c in candidates:
             if c in df.columns:
                 return c
         return None
 
+    col_label = find_col(['label'])
     col_delta = find_col(['delta'])
     col_theta = find_col(['theta'])
     col_alpha = find_col(['highalpha', 'alpha'])
     col_beta  = find_col(['highbeta',  'beta'])
     col_gamma = find_col(['highgamma', 'gamma'])
-    col_label = find_col(['label'])
+
+    # ── Format B: freq_XXX_N frequency-bin columns ───────────────────────────
+    freq_cols = [c for c in df.columns if c.startswith('freq_')]
+    if freq_cols and not all([col_delta, col_theta, col_alpha, col_beta]):
+        print(f"[MENTAL] Detected freq-bin format ({len(freq_cols)} bins)")
+
+        def band_mean(fmin, fmax):
+            """Average power across frequency bins in [fmin, fmax) Hz."""
+            cols = []
+            for c in freq_cols:
+                parts = c.split('_')
+                if len(parts) >= 2:
+                    try:
+                        hz = int(parts[1]) / 10.0
+                        if fmin <= hz < fmax:
+                            cols.append(c)
+                    except ValueError:
+                        pass
+            if cols:
+                return df[cols].mean(axis=1)
+            return pd.Series([0.0] * len(df))
+
+        df['_delta'] = band_mean(1,  4)
+        df['_theta'] = band_mean(4,  8)
+        df['_alpha'] = band_mean(8,  12)
+        df['_beta']  = band_mean(12, 30)
+        df['_gamma'] = band_mean(30, 45)
+        col_delta, col_theta = '_delta', '_theta'
+        col_alpha, col_beta, col_gamma = '_alpha', '_beta', '_gamma'
+        print(f"[MENTAL] Band cols: delta={len([c for c in freq_cols if int(c.split('_')[1])/10<4])} "
+              f"theta=... alpha=... beta=... gamma=...")
 
     if not all([col_delta, col_theta, col_alpha, col_beta]):
-        await ws.send(json.dumps({'type':'error',
-            'message':f'Cannot find band columns. Found: {list(df.columns)}'}))
+        msg = (f'Cannot find band columns.\n'
+               f'Expected: delta/theta/alpha/beta  OR  freq_XXX_N format\n'
+               f'First 5 cols: {list(df.columns[:5])}')
+        await ws.send(json.dumps({'type':'error', 'message': msg}))
+        print(f"[MENTAL] ERROR: {msg}")
         return
 
-    # Detect label encoding
-    label_names = {0:'FOCUSED', 1:'UNFOCUSED', 2:'DROWSY'}
+    # ── Label encoding ────────────────────────────────────────────────────────
+    label_names = {0:'FOCUSED', 1:'RELAXED', 2:'NEUTRAL'}
     if col_label and df[col_label].dtype == object:
         uniq = df[col_label].str.strip().str.upper().unique()
-        print(f"[MENTAL] Labels found: {uniq}")
+        print(f"[MENTAL] Labels: {uniq}")
         lmap = {}
         for u in uniq:
-            if 'FOCUS' in u or 'CONCENTRAT' in u:  lmap[u] = 0
-            elif 'RELAX' in u or 'UNFOCUS' in u:    lmap[u] = 1
-            else:                                    lmap[u] = 2
-        df['_label_int'] = df[col_label].str.strip().str.upper().map(lmap).fillna(1)
+            if 'FOCUS' in u or 'CONCENTRAT' in u: lmap[u] = 0
+            elif 'RELAX' in u:                     lmap[u] = 1
+            else:                                  lmap[u] = 2
+        df['_label_int'] = df[col_label].str.strip().str.upper().map(lmap).fillna(2)
     elif col_label:
-        df['_label_int'] = df[col_label]
+        df['_label_int'] = pd.to_numeric(df[col_label], errors='coerce').fillna(2)
     else:
-        df['_label_int'] = 1
+        df['_label_int'] = 2
 
     n = len(df)
     await ws.send(json.dumps({
