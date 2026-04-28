@@ -1,0 +1,1185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EEG 3D Glass Brain</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #050810; color: #e0e8ff; font-family: 'Courier New', monospace; overflow: hidden; }
+    #canvas3d { position: fixed; top: 0; left: 0; }
+    .ui { position: fixed; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; display: flex; }
+    .left-panel { width: 220px; padding: 16px; display: flex; flex-direction: column; gap: 12px; pointer-events: all; }
+    .center { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; padding-bottom: 20px; pointer-events: none; }
+    .right-panel { width: 220px; padding: 16px; display: flex; flex-direction: column; gap: 12px; pointer-events: all; }
+    .panel-box { background: rgba(5,8,16,0.75); border: 1px solid rgba(100,140,255,0.3); border-radius: 8px; padding: 12px; backdrop-filter: blur(8px); }
+    .panel-title { font-size: 10px; color: #6480cc; letter-spacing: 2px; margin-bottom: 8px; }
+    .big-num { font-size: 48px; font-weight: bold; text-align: center; line-height: 1; }
+    .sub-label { font-size: 10px; text-align: center; color: #6480cc; margin-top: 4px; letter-spacing: 1px; }
+    .state-badge { text-align: center; font-size: 13px; font-weight: bold; padding: 6px; border-radius: 4px; margin-top: 8px; }
+    .metric-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .metric-label { font-size: 11px; color: #6480cc; }
+    .metric-val { font-size: 13px; font-weight: bold; }
+    .bar-bg { background: rgba(100,140,255,0.15); border-radius: 3px; height: 4px; margin-top: 2px; overflow: hidden; }
+    .bar-fill { height: 4px; border-radius: 3px; transition: width 0.3s; }
+    canvas.mini { width: 100%; height: 70px; display: block; }
+    .colorbar { display: flex; height: 8px; border-radius: 4px; margin: 4px 0; background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff8000, #ff0000); }
+    .colorbar-labels { display: flex; justify-content: space-between; font-size: 9px; color: #6480cc; }
+    button { background: rgba(100,140,255,0.2); color: #e0e8ff; border: 1px solid rgba(100,140,255,0.4); padding: 7px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; width: 100%; margin-top: 4px; transition: background 0.2s; }
+    button:hover { background: rgba(100,140,255,0.4); }
+    .slider-row { margin-bottom: 8px; }
+    .slider-row label { font-size: 10px; color: #6480cc; display: flex; justify-content: space-between; }
+    input[type=range] { width: 100%; margin-top: 3px; accent-color: #6480cc; }
+    select { width: 100%; background: rgba(5,8,16,0.9); color: #e0e8ff; border: 1px solid rgba(100,140,255,0.3); padding: 5px; border-radius: 4px; font-size: 11px; }
+    .hint { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 10px; color: rgba(100,140,255,0.5); pointer-events: none; }
+    .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); justify-content: center; align-items: center; z-index: 100; }
+    .modal.show { display: flex; }
+    .modal-box { background: #0a0e1a; border: 1px solid rgba(100,140,255,0.4); border-radius: 10px; padding: 24px; width: 260px; }
+    .modal-box h3 { font-size: 13px; color: #6480cc; margin-bottom: 12px; letter-spacing: 2px; }
+    .modal-box input { width: 100%; background: rgba(100,140,255,0.1); border: 1px solid rgba(100,140,255,0.3); color: #e0e8ff; padding: 8px; border-radius: 4px; margin-bottom: 10px; }
+    .modal-btns { display: flex; gap: 8px; }
+    .modal-btns button { flex: 1; }
+    /* Report modal */
+    #reportModal .modal-box { width: 480px; max-height: 80vh; overflow-y: auto; }
+    .report-stat { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid rgba(100,140,255,0.1); font-size: 11px; }
+    .report-stat span:first-child { color: #6480cc; }
+    .report-stat span:last-child { color: #e0e8ff; font-weight: bold; }
+    .report-table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 8px; }
+    .report-table th { color: #6480cc; text-align: left; padding: 3px 4px; border-bottom: 1px solid rgba(100,140,255,0.2); }
+    .report-table td { color: #c0d0ff; padding: 3px 4px; border-bottom: 1px solid rgba(100,140,255,0.08); }
+    /* WS status */
+    .ws-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; background: #444; }
+    .ws-dot.connected { background: #00cc66; box-shadow: 0 0 6px #00cc66; }
+    .ws-dot.error     { background: #cc4444; }
+    .ws-dot.connecting { background: #ffcc44; }
+    #vAlert { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); background: rgba(100,140,255,0.15); border: 2px solid #6480cc; border-radius: 12px; padding: 20px 40px; font-size: 18px; font-weight: bold; color: #a0c0ff; display: none; pointer-events: none; text-align: center; backdrop-filter: blur(10px); }
+    #tooltip { position: fixed; display: none; background: rgba(5,8,16,0.92); border: 1px solid rgba(100,140,255,0.5); border-radius: 6px; padding: 6px 10px; font-size: 11px; pointer-events: none; z-index: 50; }
+    #tooltip .t-name { color: #a0c0ff; font-weight: bold; margin-bottom: 2px; }
+    #tooltip .t-val  { color: #e0e8ff; }
+  </style>
+</head>
+<body>
+<canvas id="canvas3d"></canvas>
+
+<div class="ui">
+  <!-- LEFT -->
+  <div class="left-panel">
+    <div class="panel-box">
+      <div class="panel-title">CONCENTRATION</div>
+      <div class="big-num" id="concNum" style="color:#a0c0ff">50%</div>
+      <div class="sub-label">ENGAGEMENT INDEX: <span id="baRatio">0.50</span></div>
+      <div class="sub-label" style="font-size:9px;color:#4a6090">
+        FAA: <span id="faaVal">0.00</span>
+        <span id="faaLabel" style="margin-left:4px;color:#6480cc"></span>
+      </div>
+      <div class="state-badge" id="stateBadge" style="background:rgba(100,140,255,0.2);color:#a0c0ff">IDLE</div>
+      <div id="emgWarn" style="display:none;font-size:9px;color:#ff8040;margin-top:4px;text-align:center">⚠ EMG ARTIFACT</div>
+    </div>
+    <div class="panel-box">
+      <div class="panel-title">FREQUENCY BANDS</div>
+      <div class="metric-row"><span class="metric-label">Delta (0-4Hz)</span><span class="metric-val" id="bDelta" style="color:#6480cc">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bDeltaBar" style="background:#6480cc;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Theta (4-8Hz)</span><span class="metric-val" id="bTheta" style="color:#8060cc">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bThetaBar" style="background:#8060cc;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Alpha (8-12Hz)</span><span class="metric-val" id="bAlpha" style="color:#00cc88">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bAlphaBar" style="background:#00cc88;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Beta (12-30Hz)</span><span class="metric-val" id="bBeta" style="color:#ffcc00">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bBetaBar" style="background:#ffcc00;width:50%"></div></div>
+      <div class="metric-row" style="margin-top:6px"><span class="metric-label">Gamma (30+Hz)</span><span class="metric-val" id="bGamma" style="color:#ff6040">0.0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="bGammaBar" style="background:#ff6040;width:50%"></div></div>
+    </div>
+    <div class="panel-box">
+      <div class="panel-title">HEATMAP SCALE</div>
+      <div class="colorbar"></div>
+      <div class="colorbar-labels"><span>Low</span><span>Mid</span><span>High</span></div>
+    </div>
+    <div class="panel-box">
+      <div class="panel-title">HEMISPHERE BALANCE</div>
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
+        <span class="metric-label" style="width:14px">L</span>
+        <div class="bar-bg" style="flex:1"><div class="bar-fill" id="lHemiBar" style="background:#4488ff;width:50%"></div></div>
+        <span class="metric-val" id="lHemiVal" style="color:#4488ff;width:32px;text-align:right">50</span>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <span class="metric-label" style="width:14px">R</span>
+        <div class="bar-bg" style="flex:1"><div class="bar-fill" id="rHemiBar" style="background:#ff6644;width:50%"></div></div>
+        <span class="metric-val" id="rHemiVal" style="color:#ff6644;width:32px;text-align:right">50</span>
+      </div>
+      <div style="text-align:center;margin-top:6px;font-size:10px;color:#6480cc" id="hemiStatus">BALANCED</div>
+    </div>
+    <div class="panel-box">
+      <div class="panel-title">BRAIN REGIONS</div>
+      <div id="regionList"></div>
+    </div>
+  </div>
+
+  <!-- CENTER -->
+  <div class="center">
+    <div class="panel-box" style="width:360px">
+      <div class="panel-title">CONCENTRATION TIMELINE · V-PATTERN DETECTION</div>
+      <canvas class="mini" id="graphCanvas"></canvas>
+    </div>
+  </div>
+
+  <!-- RIGHT -->
+  <div class="right-panel">
+    <div class="panel-box">
+      <div class="panel-title">ELECTRODE ACTIVITY</div>
+      <div id="electrodeList" style="font-size:10px;line-height:1.8;max-height:160px;overflow-y:auto"></div>
+    </div>
+    <div class="panel-box">
+      <button onclick="showAdmin()">🔐 ADMIN PANEL</button>
+      <div id="adminUI" style="display:none;margin-top:8px">
+        <div class="slider-row">
+          <label>Th_low <span id="tlv">30</span>%</label>
+          <input type="range" id="thLow" min="0" max="50" value="30" oninput="updateCfg()">
+        </div>
+        <div class="slider-row">
+          <label>Th_high <span id="thv">70</span>%</label>
+          <input type="range" id="thHigh" min="50" max="100" value="70" oninput="updateCfg()">
+        </div>
+        <div class="slider-row">
+          <label>Δt <span id="dtv">3</span>s</label>
+          <input type="range" id="dtSlider" min="1" max="10" value="3" oninput="updateCfg()">
+        </div>
+        <div class="slider-row">
+          <label>Manual <span id="mv">50</span>%</label>
+          <input type="range" id="manSlider" min="0" max="100" value="50" oninput="updateManual()">
+        </div>
+        <select id="srcSel" onchange="onSourceChange()">
+          <option value="sim">SIMULATION</option>
+          <option value="deap">DEAP DATASET</option>
+          <option value="mental">MENTAL STATE CSV</option>
+          <option value="device">EMOTIV EPOC X</option>
+        </select>
+        <div id="wsStatusRow" style="display:none;font-size:10px;color:#6480cc;margin-top:4px;text-align:center">
+          <span class="ws-dot" id="wsDot"></span><span id="wsStatusText">CONNECTING...</span>
+        </div>
+        <button onclick="forceV()">⚡ FORCE V-PATTERN</button>
+        <button onclick="showReport()">📊 SESSION REPORT</button>
+        <button onclick="startCalibration()" id="btnCal" style="background:rgba(80,200,120,0.15);border-color:rgba(80,200,120,0.4)">🎯 CALIBRATE</button>
+        <button onclick="loadCalibration()" style="font-size:9px;padding:4px 8px;background:rgba(60,120,200,0.1)">↺ LOAD SAVED CAL</button>
+        <hr style="border-color:rgba(100,140,255,0.15);margin:6px 0">
+        <div style="font-size:9px;color:#4060aa;letter-spacing:1px;margin-bottom:4px">EXPERIMENT PROTOCOL</div>
+        <select id="expProtocolSel" style="width:100%;margin-bottom:4px;font-size:10px">
+          <option value="short">SHORT (6min)</option>
+          <option value="standard">STANDARD (15min)</option>
+          <option value="quick">QUICK TEST (80s)</option>
+        </select>
+        <button onclick="startExperiment()" id="btnExp" style="background:rgba(200,120,40,0.15);border-color:rgba(200,120,40,0.4)">▶ START EXPERIMENT</button>
+        <button onclick="stopExperiment()" id="btnExpStop" style="display:none;background:rgba(255,60,60,0.15);border-color:rgba(255,60,60,0.3);font-size:10px">■ STOP</button>
+        <button onclick="addManualMarker()" id="btnMarker" style="display:none;background:rgba(255,200,50,0.1);border-color:rgba(255,200,50,0.3)" title="Keyboard: Space">📍 MARK EVENT</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Experiment phase bar (top of screen) -->
+<div id="expBar" style="display:none;position:fixed;top:0;left:0;right:0;z-index:200;pointer-events:none">
+  <div style="background:rgba(5,8,16,0.9);padding:6px 16px;display:flex;align-items:center;gap:12px;border-bottom:1px solid rgba(100,140,255,0.2)">
+    <span id="expPhaseName" style="font-size:10px;letter-spacing:2px;color:#6480cc;min-width:80px">BASELINE</span>
+    <div style="flex:1;height:4px;background:rgba(100,140,255,0.1);border-radius:2px;overflow:hidden">
+      <div id="expProgressBar" style="height:100%;width:0%;border-radius:2px;transition:width 1s linear"></div>
+    </div>
+    <span id="expTimer" style="font-size:12px;color:#a0b8ff;min-width:40px;text-align:right">0s</span>
+    <span id="expPhaseCount" style="font-size:9px;color:#4060aa">1/4</span>
+    <span style="font-size:9px;color:#4060aa;cursor:pointer;pointer-events:all" onclick="addManualMarker()">📍 [SPACE]</span>
+  </div>
+  <div id="expInstruction" style="background:rgba(5,8,16,0.75);padding:4px 16px;font-size:11px;color:#80a0d0;text-align:center;border-bottom:1px solid rgba(100,140,255,0.1)"></div>
+</div>
+
+<div id="tooltip"><div class="t-name"></div><div class="t-val"></div></div>
+<div class="hint">🖱 Drag to rotate · Scroll to zoom · Hover electrode for info</div>
+<div id="vAlert">⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#6480cc">FOCUS → CONTROL TRANSFER</span></div>
+
+<!-- REPORT MODAL -->
+<div class="modal" id="reportModal">
+  <div class="modal-box" style="width:500px">
+    <h3>SESSION REPORT</h3>
+    <div id="reportSummary"></div>
+    <div style="margin-top:14px;font-size:10px;color:#6480cc;letter-spacing:1px">V-PATTERN EVENTS</div>
+    <div id="reportEvents"></div>
+    <div style="margin-top:14px;font-size:10px;color:#6480cc;letter-spacing:1px">PEAK ANALYSIS</div>
+    <div id="reportPeaks"></div>
+    <div class="modal-btns" style="margin-top:16px">
+      <button onclick="exportCSV()">⬇ EXPORT CSV</button>
+      <button onclick="document.getElementById('reportModal').classList.remove('show')" style="background:rgba(255,60,60,0.15)">CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<!-- ADMIN MODAL -->
+<div class="modal" id="adminModal">
+  <div class="modal-box">
+    <h3>ADMIN ACCESS</h3>
+    <input type="password" id="pwInput" placeholder="Password" onkeydown="if(event.key==='Enter')checkPw()">
+    <div class="modal-btns">
+      <button onclick="checkPw()">ENTER</button>
+      <button onclick="closeModal()" style="background:rgba(255,60,60,0.15)">CANCEL</button>
+    </div>
+  </div>
+</div>
+
+<!-- Calibration overlay -->
+<div class="modal" id="calModal" style="z-index:999">
+  <div class="modal-box" style="width:340px;text-align:center">
+    <h3 id="calTitle">🎯 PERSONAL CALIBRATION</h3>
+    <div id="calInstructions" style="font-size:12px;color:#a0b8e8;margin:12px 0;line-height:1.6"></div>
+    <div style="position:relative;height:8px;background:rgba(100,140,255,0.15);border-radius:4px;margin:12px 0;overflow:hidden">
+      <div id="calBar" style="height:100%;width:0%;background:linear-gradient(90deg,#3060ff,#30c0ff);border-radius:4px;transition:width 0.3s"></div>
+    </div>
+    <div id="calTimer" style="font-size:22px;color:#6480cc;font-weight:bold;margin:8px 0">30</div>
+    <div id="calPhaseLabel" style="font-size:10px;color:#4060aa;letter-spacing:2px;margin-bottom:12px">PHASE 1/2 · RELAX</div>
+    <div id="calResult" style="display:none;font-size:11px;color:#80ffb0;text-align:left;background:rgba(0,255,100,0.05);border:1px solid rgba(0,255,100,0.2);border-radius:6px;padding:10px;margin-bottom:10px;line-height:1.8"></div>
+    <button id="calCloseBtn" style="display:none;background:rgba(80,200,120,0.2);border-color:rgba(80,200,120,0.4)" onclick="document.getElementById('calModal').classList.remove('show')">CLOSE</button>
+    <button onclick="document.getElementById('calModal').classList.remove('show')" style="background:rgba(255,60,60,0.1);margin-top:4px;font-size:10px" id="calCancelBtn">CANCEL</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ── CONFIG ────────────────────────────────────────────────
+const CFG = {
+  pw: 'admin', thLow: 30, thHigh: 70, dt: 3,
+  manual: false, manVal: 50,
+  electrodes: [
+    {n:'AF3',x:-0.26,y:-0.60},{n:'AF4',x:0.26,y:-0.60},
+    {n:'F7', x:-0.72,y:-0.48},{n:'F3', x:-0.38,y:-0.32},
+    {n:'F4', x:0.38, y:-0.32},{n:'F8', x:0.72, y:-0.48},
+    {n:'FC5',x:-0.59,y:-0.13},{n:'FC6',x:0.59, y:-0.13},
+    {n:'T7', x:-0.85,y:0.05}, {n:'T8', x:0.85, y:0.05},
+    {n:'P7', x:-0.66,y:0.50}, {n:'P8', x:0.66, y:0.50},
+    {n:'O1', x:-0.26,y:0.72}, {n:'O2', x:0.26, y:0.72}
+  ],
+  vals: new Float32Array(14).fill(50),
+  history: [],
+  vLow: false, vLowTime: 0,
+  dataSource: 'sim'  // 'sim' | 'ws'
+};
+
+// ── BRAIN REGION DEFINITIONS (electrode index groups) ─────
+const REGIONS = [
+  { name:'FRONTAL',  idxs:[0,1,2,3,4,5],  color:'#6688ff' },
+  { name:'CENTRAL',  idxs:[6,7],           color:'#44ddaa' },
+  { name:'TEMPORAL', idxs:[8,9],           color:'#ffaa44' },
+  { name:'PARIETAL', idxs:[10,11],         color:'#cc88ff' },
+  { name:'OCCIPITAL',idxs:[12,13],         color:'#ff6677' }
+];
+
+// ── SESSION REPORT TRACKER ────────────────────────────────
+const RPT = {
+  sessionStart: Date.now(),
+  events: [],   // {t, concBefore, concAfter, peakConc, peakDelay}
+  peaks: [],    // {t, conc}
+  _lastAvg: 50,
+  _rising: false
+};
+function rptTick(avg) {
+  // detect local peaks
+  if (RPT._rising && avg < RPT._lastAvg - 1) {
+    RPT.peaks.push({ t: Date.now(), conc: RPT._lastAvg });
+  }
+  RPT._rising = avg > RPT._lastAvg;
+  RPT._lastAvg = avg;
+}
+
+// ── WEBSOCKET CLIENT ──────────────────────────────────────
+let ws = null, wsReTimer = null;
+function wsSetStatus(state) {
+  const row  = document.getElementById('wsStatusRow');
+  const dot  = document.getElementById('wsDot');
+  const txt  = document.getElementById('wsStatusText');
+  row.style.display = 'block';
+  dot.className = 'ws-dot ' + state;
+  txt.textContent = state === 'connected' ? 'CONNECTED'
+                  : state === 'error'     ? 'ERROR — retrying…'
+                  : state === 'connecting'? 'CONNECTING…'
+                  : 'DISCONNECTED';
+}
+function wsConnect() {
+  if (ws && ws.readyState <= 1) return;
+  wsSetStatus('connecting');
+  try { ws = new WebSocket('ws://localhost:8765'); } catch(e) { wsSetStatus('error'); return; }
+  ws.onopen = () => wsSetStatus('connected');
+  ws.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type === 'eeg') {
+        d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
+        if (d.bands) {
+          bands.delta            = d.bands.delta;
+          bands.theta            = d.bands.theta;
+          bands.alpha            = d.bands.alpha;
+          bands.beta             = d.bands.beta;
+          bands.gamma            = d.bands.gamma;
+          bands.engagement_index = d.bands.engagement_index ?? null;
+          bands.faa              = d.bands.faa ?? null;
+          bands.emg_warn         = d.artifacts?.emg_warn ?? false;
+          bands.concentration    = d.bands.concentration ?? null;
+        }
+        // V-pattern: 서버 ML/rule 감지 → rising edge에서만 toggleControl 호출
+        if (d.vpattern?.v_active && !CFG._lastVActive) {
+          toggleControl(d.bands?.concentration ?? 50);
+        }
+        CFG._lastVActive = d.vpattern?.v_active ?? false;
+        CFG.dataSource = 'ws';
+      } else if (d.type === 'state_snapshot') {
+        d.channels.forEach((v, i) => { CFG.vals[i] = Math.max(0, Math.min(100, v)); });
+        if (d.bands) {
+          bands.delta = d.bands.delta; bands.theta = d.bands.theta;
+          bands.alpha = d.bands.alpha; bands.beta  = d.bands.beta;
+          bands.gamma = d.bands.gamma;
+        }
+        // 서버 소스에 맞게 드롭다운 자동 업데이트
+        if (d.source) {
+          const srcMap = { sim:'sim', deap:'deap', mental:'mental',
+                           mental_state:'mental', emotiv:'device' };
+          const sel = document.getElementById('srcSel');
+          const mapped = srcMap[d.source] || 'sim';
+          if ([...sel.options].some(o => o.value === mapped)) sel.value = mapped;
+        }
+        // 서버에 저장된 설정값으로 슬라이더 복원
+        if (d.settings) {
+          CFG.thLow  = d.settings.thLow;  CFG.thHigh = d.settings.thHigh;
+          CFG.dt     = d.settings.dt;
+          document.getElementById('thLow').value    = CFG.thLow;
+          document.getElementById('thHigh').value   = CFG.thHigh;
+          document.getElementById('dtSlider').value = CFG.dt;
+          document.getElementById('tlv').textContent = CFG.thLow;
+          document.getElementById('thv').textContent = CFG.thHigh;
+          document.getElementById('dtv').textContent = CFG.dt;
+        }
+        CFG.dataSource = 'ws';
+      } else if (d.type === 'calibration') {
+        _handleCalibration(d);
+      } else if (d.type === 'experiment') {
+        _handleExperiment(d);
+      } else if (d.type === 'exp_marker_ack') {
+        console.log('[EXP] Marker ack:', d.label, '@', d.elapsed, 's');
+      } else if (d.type === 'settings') {
+        // Server pushed updated settings (e.g. after calibration)
+        if (d.settings) {
+          CFG.thLow  = d.settings.thLow  ?? CFG.thLow;
+          CFG.thHigh = d.settings.thHigh ?? CFG.thHigh;
+          document.getElementById('thLow').value    = CFG.thLow;
+          document.getElementById('thHigh').value   = CFG.thHigh;
+          document.getElementById('tlv').textContent = CFG.thLow;
+          document.getElementById('thv').textContent = CFG.thHigh;
+        }
+      } else if (d.type === 'meta') {
+        console.log('[WS] DEAP meta:', d);
+      } else if (d.type === 'done') {
+        console.log('[WS] Stream finished, trial', d.trial);
+      } else if (d.type === 'status') {
+        console.log('[WS]', d.message);
+      }
+    } catch(_) {}
+  };
+  ws.onclose = () => {
+    wsSetStatus('error');
+    CFG.dataSource = 'sim';
+    clearTimeout(wsReTimer);
+    wsReTimer = setTimeout(wsConnect, 3000);
+  };
+  ws.onerror = () => wsSetStatus('error');
+}
+function onSourceChange() {
+  const src = document.getElementById('srcSel').value;
+  if (src === 'sim') {
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    clearTimeout(wsReTimer);
+    CFG.dataSource = 'sim';
+    document.getElementById('wsStatusRow').style.display = 'none';
+  } else {
+    wsConnect();
+  }
+}
+
+// ── JET COLORMAP ──────────────────────────────────────────
+function jet(t) {
+  t = Math.max(0, Math.min(1, t));
+  const r = Math.max(0, Math.min(1, 1.5 - Math.abs(4*t - 3)));
+  const g = Math.max(0, Math.min(1, 1.5 - Math.abs(4*t - 2)));
+  const b = Math.max(0, Math.min(1, 1.5 - Math.abs(4*t - 1)));
+  return {r, g, b};
+}
+
+// ── 2D → 3D SPHERE ───────────────────────────────────────
+function toSphere(nx, ny, R) {
+  const r2d = Math.sqrt(nx*nx + ny*ny);
+  const phi = r2d * Math.PI * 0.5;
+  const theta = Math.atan2(ny, nx);
+  return new THREE.Vector3(
+    R * Math.sin(phi) * Math.cos(theta),
+    R * Math.cos(phi),
+    R * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+// ── THREE.JS SETUP ───────────────────────────────────────
+const canvas = document.getElementById('canvas3d');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+camera.position.set(0, 0.5, 3.5);
+
+// Lights
+scene.add(new THREE.AmbientLight(0x334488, 1.2));
+const ptLight = new THREE.PointLight(0x6688ff, 1.5, 10);
+ptLight.position.set(2, 2, 2);
+scene.add(ptLight);
+
+// Glass brain sphere
+const brainGeo = new THREE.SphereGeometry(1, 64, 64);
+const brainMat = new THREE.MeshPhongMaterial({
+  color: 0x2244aa, transparent: true, opacity: 0.18,
+  wireframe: false, side: THREE.DoubleSide,
+  shininess: 120, specular: 0x8899ff
+});
+const brain = new THREE.Mesh(brainGeo, brainMat);
+scene.add(brain);
+
+// Wireframe overlay
+const wireMat = new THREE.MeshBasicMaterial({ color: 0x334477, wireframe: true, transparent: true, opacity: 0.08 });
+scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.01, 24, 24), wireMat));
+
+// Equator ring
+const ringGeo = new THREE.TorusGeometry(1.01, 0.003, 8, 80);
+const ringMat = new THREE.MeshBasicMaterial({ color: 0x4466aa, transparent: true, opacity: 0.4 });
+scene.add(new THREE.Mesh(ringGeo, ringMat));
+
+// Nose marker (정면 표시 - 앞쪽 중앙)
+const noseMesh = new THREE.Mesh(
+  new THREE.ConeGeometry(0.04, 0.12, 8),
+  new THREE.MeshBasicMaterial({ color: 0xffcc44 })
+);
+noseMesh.position.set(0, -0.18, 1.02);
+noseMesh.rotation.x = Math.PI / 2;
+scene.add(noseMesh);
+
+// Direction labels (F/B/L/R)
+function makeLabel(text, color) {
+  const h = 40;
+  const tmp = document.createElement('canvas').getContext('2d');
+  tmp.font = 'bold 22px Courier New';
+  const w = Math.ceil(tmp.measureText(text).width) + 24;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = color; ctx.font = 'bold 22px Courier New';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, w/2, h/2);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.75 }));
+  sp.scale.set(0.18 * (w/h), 0.18, 1);
+  return sp;
+}
+const frontLabel = makeLabel('FRONT', '#ffcc44'); frontLabel.position.set(0, -0.05, 1.35); scene.add(frontLabel);
+const backLabel  = makeLabel('BACK',  '#6480cc'); backLabel.position.set(0, -0.05, -1.35); scene.add(backLabel);
+const leftLabel  = makeLabel('L',     '#6480cc'); leftLabel.position.set(-1.35, 0, 0);    scene.add(leftLabel);
+const rightLabel = makeLabel('R',     '#6480cc'); rightLabel.position.set(1.35, 0, 0);    scene.add(rightLabel);
+
+// Electrode meshes
+const eGeos = CFG.electrodes.map(() => new THREE.SphereGeometry(0.045, 12, 12));
+const eMats = CFG.electrodes.map(() => new THREE.MeshStandardMaterial({
+  color: 0x4488ff, emissive: 0x2244aa, emissiveIntensity: 0.6,
+  roughness: 0.3, metalness: 0.5
+}));
+const eMeshes = CFG.electrodes.map((e, i) => {
+  const m = new THREE.Mesh(eGeos[i], eMats[i]);
+  m.position.copy(toSphere(e.x, e.y, 1.02));
+  scene.add(m);
+  return m;
+});
+
+// Glow sprites (billboard)
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0, 'rgba(100,160,255,0.9)');
+  g.addColorStop(0.3, 'rgba(60,100,255,0.4)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,64,64);
+  return new THREE.CanvasTexture(c);
+})();
+
+const glowMeshes = CFG.electrodes.map((e, i) => {
+  const mat = new THREE.SpriteMaterial({ map: glowTex, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(0.3, 0.3, 1);
+  sp.position.copy(toSphere(e.x, e.y, 1.02));
+  scene.add(sp);
+  return sp;
+});
+
+// Connection lines between electrodes
+const lineMat = new THREE.LineBasicMaterial({ color: 0x2244aa, transparent: true, opacity: 0.15 });
+CFG.electrodes.forEach((a, i) => {
+  CFG.electrodes.forEach((b, j) => {
+    if (j <= i) return;
+    const d = Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
+    if (d > 0.45) return;
+    const pts = [toSphere(a.x,a.y,1.0), toSphere(b.x,b.y,1.0)];
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), lineMat));
+  });
+});
+
+// ── BRAIN REGIONS ─────────────────────────────────────────
+function rLine(x0, x1, ny, R=1.015, col=0x4488ff, op=0.4, n=60) {
+  const pts = [];
+  for(let i=0;i<=n;i++) pts.push(toSphere(x0+(x1-x0)*(i/n), ny, R));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op})));
+}
+function rVLine(nx, y0, y1, R=1.015, col=0x4488ff, op=0.4, n=60) {
+  const pts = [];
+  for(let i=0;i<=n;i++) pts.push(toSphere(nx, y0+(y1-y0)*(i/n), R));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),
+    new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op})));
+}
+// 전두엽/중앙 경계
+rLine(-0.88, 0.88, -0.10, 1.015, 0x44aaff, 0.45);
+// 중앙/두정엽 경계
+rLine(-0.88, 0.88,  0.20, 1.015, 0x44aaff, 0.35);
+// 두정엽/후두엽 경계
+rLine(-0.70, 0.70,  0.58, 1.015, 0x44aaff, 0.35);
+// 측두엽 좌우 경계
+rVLine(-0.68, -0.28, 0.42, 1.015, 0x44aaff, 0.30);
+rVLine( 0.68, -0.28, 0.42, 1.015, 0x44aaff, 0.30);
+// 중앙 시상면 (좌우 반구 구분)
+rVLine(0, -0.90, 0.90, 1.015, 0x334488, 0.20);
+
+// 영역 라벨
+function rLabel(text, nx, ny) {
+  const sp = makeLabel(text, '#3a5a8a');
+  sp.scale.multiplyScalar(1.15);
+  sp.position.copy(toSphere(nx, ny, 1.22));
+  scene.add(sp);
+}
+rLabel('FRONTAL',    0,   -0.48);
+rLabel('PARIETAL',   0,    0.36);
+rLabel('OCCIPITAL',  0,    0.76);
+rLabel('L.TEMP',    -0.90, 0.14);
+rLabel('R.TEMP',     0.90, 0.14);
+
+// ── ORBIT CONTROLS (manual) ──────────────────────────────
+let drag = false, lastMouse = {x:0,y:0};
+let rotX = 0.3, rotY = 0;
+let zoom = 3.5;
+canvas.addEventListener('mousedown', e => { drag = true; lastMouse = {x:e.clientX, y:e.clientY}; });
+window.addEventListener('mouseup', () => drag = false);
+window.addEventListener('mousemove', e => {
+  if (!drag) return;
+  rotY -= (e.clientX - lastMouse.x) * 0.007;
+  rotX += (e.clientY - lastMouse.y) * 0.007;
+  rotX = Math.max(-1.4, Math.min(1.4, rotX));
+  lastMouse = {x:e.clientX, y:e.clientY};
+});
+canvas.addEventListener('wheel', e => { zoom = Math.max(1.8, Math.min(6, zoom + e.deltaY * 0.005)); });
+
+// Touch support
+let lastTouch = null;
+canvas.addEventListener('touchstart', e => { lastTouch = e.touches[0]; });
+canvas.addEventListener('touchmove', e => {
+  if (!lastTouch) return;
+  rotY -= (e.touches[0].clientX - lastTouch.clientX) * 0.007;
+  rotX += (e.touches[0].clientY - lastTouch.clientY) * 0.007;
+  lastTouch = e.touches[0];
+  e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchend', () => lastTouch = null);
+
+// ── ELECTRODE TOOLTIP (Raycaster) ────────────────────────
+const raycaster = new THREE.Raycaster();
+const mouse2d = new THREE.Vector2();
+const tooltip = document.getElementById('tooltip');
+raycaster.params.Mesh = { threshold: 0.05 };
+
+window.addEventListener('mousemove', e => {
+  if (drag) { tooltip.style.display = 'none'; return; }
+  mouse2d.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse2d.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  raycaster.setFromCamera(mouse2d, camera);
+  const hits = raycaster.intersectObjects(eMeshes);
+  if (hits.length > 0) {
+    const idx = eMeshes.indexOf(hits[0].object);
+    const e2 = CFG.electrodes[idx];
+    const v = CFG.vals[idx];
+    const c = jet(v/100);
+    const col = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+    tooltip.querySelector('.t-name').textContent = e2.n;
+    tooltip.querySelector('.t-val').innerHTML = `Activity: <span style="color:${col};font-weight:bold">${v.toFixed(1)}%</span>`;
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX + 14) + 'px';
+    tooltip.style.top  = (e.clientY - 38) + 'px';
+  } else {
+    tooltip.style.display = 'none';
+  }
+});
+
+// ── RESIZE ───────────────────────────────────────────────
+function resize() {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ── EEG SIMULATION ───────────────────────────────────────
+let bands = {delta:50, theta:40, alpha:50, beta:50, gamma:30};
+let vPhase = null;
+let controlActive = false;
+
+function simStep() {
+  // WS 연결 중이면 vals는 ws.onmessage에서 이미 업데이트됨 → 시뮬레이션 스킵
+  if (CFG.dataSource !== 'ws') {
+    if (vPhase) {
+      vPhase.step++;
+      const t = vPhase.step / vPhase.total;
+      const conc = t < 0.4 ? 15 + t*10 : 15 + (t-0.4)/0.6 * 85;
+      for (let i=0; i<14; i++) CFG.vals[i] = conc + (Math.random()-0.5)*12;
+      if (vPhase.step >= vPhase.total) vPhase = null;
+    } else if (CFG.manual) {
+      for (let i=0; i<14; i++) CFG.vals[i] = CFG.manVal + (Math.random()-0.5)*8;
+    } else {
+      for (let i=0; i<14; i++) {
+        CFG.vals[i] += (Math.random()-0.5)*6;
+        CFG.vals[i] = Math.max(5, Math.min(95, CFG.vals[i]));
+      }
+    }
+    // simulate band powers (only in sim mode)
+    const focus = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
+    bands.alpha = 60 - focus*40 + (Math.random()-0.5)*10;
+    bands.beta  = 30 + focus*50 + (Math.random()-0.5)*10;
+    bands.theta = 40 + (Math.random()-0.5)*15;
+    bands.delta = 30 + (Math.random()-0.5)*10;
+    bands.gamma = 20 + focus*30 + (Math.random()-0.5)*8;
+    Object.keys(bands).forEach(k => bands[k] = Math.max(0, Math.min(100, bands[k])));
+  }
+
+  const avg = CFG.vals.reduce((s,v)=>s+v,0)/14;
+  CFG.history.push(avg);
+  if (CFG.history.length > 120) CFG.history.shift();
+  rptTick(avg);
+
+  // V-pattern detection
+  if (!CFG.vLow && avg < CFG.thLow) {
+    CFG.vLow = true;
+    CFG.vLowTime = Date.now();
+  }
+  if (CFG.vLow && (Date.now() - CFG.vLowTime) / 1000 > CFG.dt) {
+    CFG.vLow = false;
+  }
+  if (CFG.vLow && avg > CFG.thHigh) {
+    const elapsed = (Date.now() - CFG.vLowTime) / 1000;
+    const recent = CFG.history.slice(-8);
+    const slope = recent.length > 3 ? (recent[recent.length-1] - recent[recent.length-4]) / 3 : 0;
+    if (elapsed < CFG.dt && slope > 1.5) {
+      toggleControl(avg);
+    }
+    CFG.vLow = false;
+  }
+  return avg;
+}
+
+let vAlertTimer = null;
+let pulseActive = false, pulseTimer = 0;
+
+function toggleControl(concAtEvent = 50) {
+  controlActive = !controlActive;
+  // Record event for report
+  const evtTime = Date.now();
+  const eventEntry = { t: evtTime, concAtEvent, type: controlActive ? 'ACTIVATED' : 'DEACTIVATED', peakConc: null, peakDelay: null };
+  RPT.events.push(eventEntry);
+  // Find next peak within 10s (checked later in rptTick via closure)
+  setTimeout(() => {
+    const recentPeaks = RPT.peaks.filter(p => p.t > evtTime && p.t < evtTime + 10000);
+    if (recentPeaks.length > 0) {
+      const best = recentPeaks.reduce((a,b) => b.conc > a.conc ? b : a);
+      eventEntry.peakConc  = Math.round(best.conc);
+      eventEntry.peakDelay = ((best.t - evtTime) / 1000).toFixed(1);
+    }
+  }, 10000);
+
+  const el = document.getElementById('vAlert');
+  el.innerHTML = controlActive
+    ? '⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#ff9060">CONTROL ACTIVATED</span>'
+    : '⚡ V-PATTERN DETECTED<br><span style="font-size:12px;color:#6480cc">CONTROL DEACTIVATED</span>';
+  el.style.borderColor = controlActive ? '#ff8040' : '#6480cc';
+  el.style.display = 'block';
+  clearTimeout(vAlertTimer);
+  vAlertTimer = setTimeout(() => el.style.display='none', 2500);
+  pulseActive = true;
+  pulseTimer = 0;
+}
+
+// ── UPDATE 3D VISUALS ─────────────────────────────────────
+function update3D() {
+  CFG.electrodes.forEach((e, i) => {
+    const t = CFG.vals[i] / 100;
+    const c = jet(t);
+    eMats[i].color.setRGB(c.r, c.g, c.b);
+    eMats[i].emissive.setRGB(c.r*0.5, c.g*0.5, c.b*0.5);
+    eMats[i].emissiveIntensity = 0.4 + t * 1.2;
+    glowMeshes[i].material.color.setRGB(c.r, c.g, c.b);
+    glowMeshes[i].material.opacity = 0.3 + t * 0.7;
+    const s = 0.25 + t * 0.45;
+    glowMeshes[i].scale.set(s, s, 1);
+  });
+
+  // Brain sphere pulse with avg
+  const avg = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
+  brainMat.opacity = 0.12 + avg * 0.14;
+}
+
+// ── UI UPDATE ─────────────────────────────────────────────
+function updateUI(avg) {
+  document.getElementById('concNum').textContent = Math.round(avg)+'%';
+  // Engagement Index
+  const ei = bands.engagement_index ?? (0.5 + avg/200);
+  document.getElementById('baRatio').textContent = (typeof ei === 'number' ? ei : 0).toFixed(3);
+  // FAA: Frontal Alpha Asymmetry
+  const faa = bands.faa ?? 0;
+  document.getElementById('faaVal').textContent = faa.toFixed(3);
+  const faaLbl = faa > 0.05 ? '↑ APPROACH' : faa < -0.05 ? '↓ WITHDRAW' : '─ NEUTRAL';
+  document.getElementById('faaLabel').textContent = faaLbl;
+  // EMG warning
+  const emgWarn = document.getElementById('emgWarn');
+  if (bands.emg_warn) emgWarn.style.display = 'block';
+  else emgWarn.style.display = 'none';
+  const c = jet(avg/100);
+  document.getElementById('concNum').style.color = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+
+  const badge = document.getElementById('stateBadge');
+  if (avg < CFG.thLow) {
+    badge.textContent = 'RELAXED'; badge.style.background='rgba(0,100,200,0.25)'; badge.style.color='#60a0ff';
+  } else if (avg > CFG.thHigh) {
+    badge.textContent = 'FOCUSED'; badge.style.background='rgba(255,80,0,0.25)'; badge.style.color='#ff9060';
+  } else {
+    badge.textContent = 'TRANSITION'; badge.style.background='rgba(0,180,100,0.2)'; badge.style.color='#60dd90';
+  }
+
+  // Bar width = relative % of total band power (always 0-100, sums to 100)
+  // Text = raw value (keeps absolute magnitudes visible)
+  const _bandKeys = ['delta','theta','alpha','beta','gamma'];
+  const _bandTotal = _bandKeys.reduce((s,k) => s + Math.max(0, bands[k]||0), 0) || 1;
+  _bandKeys.forEach(k => {
+    const relPct = Math.min(100, (bands[k]||0) / _bandTotal * 100);
+    const cap = k.charAt(0).toUpperCase() + k.slice(1);
+    document.getElementById('b'+cap).textContent = (bands[k]||0).toFixed(1);
+    document.getElementById('b'+cap+'Bar').style.width = relPct.toFixed(1) + '%';
+  });
+
+  // Hemisphere balance (L: AF3,F7,F3,FC5,T7,P7,O1 / R: AF4,F8,F4,FC6,T8,P8,O2)
+  const lIdx = [0,2,3,6,8,10,12], rIdx = [1,4,5,7,9,11,13];
+  const lAvg = lIdx.reduce((s,i)=>s+CFG.vals[i],0)/lIdx.length;
+  const rAvg = rIdx.reduce((s,i)=>s+CFG.vals[i],0)/rIdx.length;
+  document.getElementById('lHemiBar').style.width = lAvg+'%';
+  document.getElementById('rHemiBar').style.width = rAvg+'%';
+  document.getElementById('lHemiVal').textContent = lAvg.toFixed(0);
+  document.getElementById('rHemiVal').textContent = rAvg.toFixed(0);
+  const diff = Math.abs(lAvg - rAvg);
+  document.getElementById('hemiStatus').textContent = diff < 8 ? 'BALANCED' : lAvg > rAvg ? 'L DOMINANT' : 'R DOMINANT';
+
+  // Brain region averages (C)
+  document.getElementById('regionList').innerHTML = REGIONS.map(r => {
+    const rv = r.idxs.reduce((s,i) => s + CFG.vals[i], 0) / r.idxs.length;
+    const c = jet(rv/100);
+    const col = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
+    return `<div style="margin-bottom:5px">
+      <div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:2px">
+        <span style="color:${r.color}">${r.name}</span>
+        <span style="color:${col};font-weight:bold">${rv.toFixed(1)}%</span>
+      </div>
+      <div class="bar-bg"><div class="bar-fill" style="background:${col};width:${rv}%"></div></div>
+    </div>`;
+  }).join('');
+
+  // Electrode list
+  const el = document.getElementById('electrodeList');
+  el.innerHTML = CFG.electrodes.map((e,i) => {
+    const v = CFG.vals[i], t = v/100, cc = jet(t);
+    const col = `rgb(${Math.round(cc.r*255)},${Math.round(cc.g*255)},${Math.round(cc.b*255)})`;
+    return `<div style="display:flex;justify-content:space-between"><span style="color:#6480cc">${e.n}</span><span style="color:${col}">${v.toFixed(1)}</span></div>`;
+  }).join('');
+}
+
+// ── GRAPH ─────────────────────────────────────────────────
+function drawGraph() {
+  const cv = document.getElementById('graphCanvas');
+  const ctx = cv.getContext('2d');
+  cv.width = cv.offsetWidth * devicePixelRatio;
+  cv.height = cv.offsetHeight * devicePixelRatio;
+  ctx.scale(devicePixelRatio, devicePixelRatio);
+  const W = cv.offsetWidth, H = cv.offsetHeight, pad = 6;
+  ctx.fillStyle = 'transparent'; ctx.clearRect(0,0,W,H);
+  const hist = CFG.history;
+  if (hist.length < 2) return;
+  // threshold lines
+  [[CFG.thLow,'rgba(60,100,255,0.4)'],[CFG.thHigh,'rgba(255,100,60,0.4)']].forEach(([th,col]) => {
+    const y = H - pad - (th/100)*(H-2*pad);
+    ctx.strokeStyle=col; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.beginPath(); ctx.moveTo(pad,y); ctx.lineTo(W-pad,y); ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  // gradient line
+  const grad = ctx.createLinearGradient(pad,0,W-pad,0);
+  grad.addColorStop(0,'#4060cc'); grad.addColorStop(0.5,'#40cc80'); grad.addColorStop(1,'#ff8040');
+  ctx.strokeStyle = grad; ctx.lineWidth = 2;
+  ctx.beginPath();
+  hist.forEach((v,i) => {
+    const x = pad + (i/(hist.length-1))*(W-2*pad);
+    const y = H - pad - (v/100)*(H-2*pad);
+    i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+}
+
+// ── MAIN LOOP ─────────────────────────────────────────────
+let frame = 0;
+function animate() {
+  requestAnimationFrame(animate);
+  frame++;
+  if (frame % 6 === 0) { // ~10Hz sim
+    const avg = simStep();
+    update3D();
+    updateUI(avg);
+    drawGraph();
+  }
+  // V-pattern pulse effect
+  if (pulseActive) {
+    pulseTimer += 0.06;
+    const p = Math.sin(pulseTimer * 3) * 0.5 + 0.5;
+    const col = controlActive ? {r:0.8+p*0.2, g:0.3+p*0.1, b:0.1} : {r:0.1, g:0.3+p*0.2, b:0.8+p*0.2};
+    brainMat.color.setRGB(col.r, col.g, col.b);
+    brainMat.opacity = 0.15 + p * 0.40;
+    eMeshes.forEach(m => { m.material.emissiveIntensity = 0.5 + p * 2.0; });
+    if (pulseTimer > Math.PI * 5) {
+      pulseActive = false; pulseTimer = 0;
+      brainMat.color.setHex(0x2244aa);
+      brainMat.opacity = 0.18;
+    }
+  }
+
+  // Camera orbit
+  camera.position.x = zoom * Math.sin(rotY) * Math.cos(rotX);
+  camera.position.y = zoom * Math.sin(rotX);
+  camera.position.z = zoom * Math.cos(rotY) * Math.cos(rotX);
+  camera.lookAt(0, 0.1, 0);
+  renderer.render(scene, camera);
+}
+animate();
+
+// ── ADMIN / MODAL ─────────────────────────────────────────
+function showAdmin() { document.getElementById('adminModal').classList.add('show'); }
+function closeModal() { document.getElementById('adminModal').classList.remove('show'); document.getElementById('pwInput').value=''; }
+function checkPw() {
+  if (document.getElementById('pwInput').value === CFG.pw) {
+    closeModal();
+    document.getElementById('adminUI').style.display = 'block';
+  } else { alert('Wrong password'); }
+}
+function updateCfg() {
+  CFG.thLow = +document.getElementById('thLow').value;
+  CFG.thHigh = +document.getElementById('thHigh').value;
+  CFG.dt = +document.getElementById('dtSlider').value;
+  document.getElementById('tlv').textContent = CFG.thLow;
+  document.getElementById('thv').textContent = CFG.thHigh;
+  document.getElementById('dtv').textContent = CFG.dt;
+  // 3순위: 변경된 설정을 서버에 전송해서 영속화
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'settings',
+      settings: { thLow: CFG.thLow, thHigh: CFG.thHigh, dt: CFG.dt, slope: 1.5 }
+    }));
+  }
+}
+function updateManual() {
+  CFG.manVal = +document.getElementById('manSlider').value;
+  CFG.manual = true;
+  document.getElementById('mv').textContent = CFG.manVal;
+}
+function forceV() {
+  if (CFG.dataSource === 'ws') {
+    toggleControl(bands.concentration ?? 50);
+  } else {
+    vPhase = { step: 0, total: 80 };
+    CFG.manual = false;
+    document.getElementById('manSlider').value = 50;
+  }
+}
+
+// ── SESSION REPORT (D) ────────────────────────────────────
+function fmtTime(ms) {
+  const s = Math.round((ms - RPT.sessionStart) / 1000);
+  return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
+}
+function showReport() {
+  const hist = CFG.history;
+  const dur  = Math.round((Date.now() - RPT.sessionStart) / 1000);
+  const avgC = hist.length ? (hist.reduce((a,b)=>a+b,0)/hist.length).toFixed(1) : '-';
+  const maxC = hist.length ? Math.max(...hist).toFixed(1) : '-';
+  const minC = hist.length ? Math.min(...hist).toFixed(1) : '-';
+  const src  = document.getElementById('srcSel').value.toUpperCase();
+
+  // Summary
+  const delayArr = RPT.events.filter(e=>e.peakDelay!==null).map(e=>+e.peakDelay);
+  const avgDelay = delayArr.length ? (delayArr.reduce((a,b)=>a+b,0)/delayArr.length).toFixed(1)+'s' : 'N/A';
+  document.getElementById('reportSummary').innerHTML = `
+    <div class="report-stat"><span>Session Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
+    <div class="report-stat"><span>Data Source</span><span>${src}</span></div>
+    <div class="report-stat"><span>Avg Concentration</span><span>${avgC}%</span></div>
+    <div class="report-stat"><span>Max Concentration</span><span>${maxC}%</span></div>
+    <div class="report-stat"><span>Min Concentration</span><span>${minC}%</span></div>
+    <div class="report-stat"><span>V-Pattern Events</span><span>${RPT.events.length}</span></div>
+    <div class="report-stat"><span>Avg Peak Delay</span><span>${avgDelay}</span></div>
+  `;
+
+  // Events table
+  if (RPT.events.length === 0) {
+    document.getElementById('reportEvents').innerHTML = '<div style="font-size:10px;color:#6480cc;padding:6px 0">No events recorded yet</div>';
+  } else {
+    document.getElementById('reportEvents').innerHTML = `
+      <table class="report-table">
+        <thead><tr><th>Time</th><th>Type</th><th>Conc@Event</th><th>Peak Conc</th><th>Peak Delay</th></tr></thead>
+        <tbody>${RPT.events.map(e=>`
+          <tr>
+            <td>${fmtTime(e.t)}</td>
+            <td style="color:${e.type==='ACTIVATED'?'#ff9060':'#6480cc'}">${e.type}</td>
+            <td>${e.concAtEvent.toFixed(1)}%</td>
+            <td>${e.peakConc!==null ? e.peakConc+'%' : '—'}</td>
+            <td>${e.peakDelay!==null ? e.peakDelay+'s' : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // Session peaks summary
+  const topPeaks = [...RPT.peaks].sort((a,b)=>b.conc-a.conc).slice(0,5);
+  document.getElementById('reportPeaks').innerHTML = topPeaks.length === 0
+    ? '<div style="font-size:10px;color:#6480cc;padding:6px 0">No peaks detected yet</div>'
+    : `<table class="report-table">
+        <thead><tr><th>Time</th><th>Peak Concentration</th></tr></thead>
+        <tbody>${topPeaks.map(p=>`<tr><td>${fmtTime(p.t)}</td><td style="color:#ffaa44">${p.conc.toFixed(1)}%</td></tr>`).join('')}
+        </tbody>
+      </table>`;
+
+  document.getElementById('reportModal').classList.add('show');
+}
+
+function exportCSV() {
+  const rows = ['Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)'];
+  RPT.events.forEach(e => {
+    const t = ((e.t - RPT.sessionStart)/1000).toFixed(1);
+    rows.push(`${t},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`);
+  });
+  const histRows = ['SessionTime(s),Concentration(%)'];
+  CFG.history.forEach((v,i) => histRows.push(`${(i*0.6).toFixed(1)},${v.toFixed(1)}`));
+
+  const blob = new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+  a.click();
+}
+
+// ── Calibration ───────────────────────────────────────────────────────────────
+const CAL = { active: false, phase: 'idle', totalSecs: 30, relax: 15, focus: 15 };
+
+function startCalibration() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('서버에 연결되어 있지 않습니다. WebSocket 연결을 확인하세요.');
+    return;
+  }
+  CAL.active = true;
+  CAL.phase  = 'relax';
+  document.getElementById('calResult').style.display = 'none';
+  document.getElementById('calCloseBtn').style.display = 'none';
+  document.getElementById('calCancelBtn').style.display = 'inline-block';
+  document.getElementById('calTitle').textContent = '🎯 PERSONAL CALIBRATION';
+  document.getElementById('calInstructions').textContent = '눈을 감고 편안하게 호흡하세요.\n긴장을 풀고 자연스럽게 쉬세요.';
+  document.getElementById('calPhaseLabel').textContent = 'PHASE 1/2 · RELAX';
+  document.getElementById('calTimer').textContent = CAL.relax;
+  document.getElementById('calBar').style.width = '0%';
+  document.getElementById('calModal').classList.add('show');
+  ws.send(JSON.stringify({ type: 'calibrate_start' }));
+}
+
+function loadCalibration() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'calibrate_load' }));
+}
+
+function _handleCalibration(d) {
+  const state = d.state || d.phase;
+  const bar   = document.getElementById('calBar');
+
+  if (state === 'relax') {
+    const prog = d.progress || 0;
+    const rem  = Math.ceil(d.remaining ?? CAL.relax);
+    // Relax = first half (0→50%)
+    bar.style.transition = 'width 1s linear';
+    bar.style.width = (prog * 50).toFixed(1) + '%';
+    document.getElementById('calTimer').textContent = rem;
+    document.getElementById('calPhaseLabel').textContent = 'PHASE 1/2 · RELAX';
+
+  } else if (d.transition && state === 'focus') {
+    CAL.phase = 'focus';
+    document.getElementById('calInstructions').textContent =
+      '집중하세요. 속으로 숫자를 세거나 암산을 하세요.';
+    document.getElementById('calPhaseLabel').textContent = 'PHASE 2/2 · FOCUS';
+    bar.style.transition = 'none';
+    bar.style.width = '50%';
+
+  } else if (state === 'focus') {
+    const prog = d.progress || 0;
+    const rem  = Math.ceil(d.remaining ?? CAL.focus);
+    // Focus = second half (50→100%)
+    bar.style.transition = 'width 1s linear';
+    bar.style.width = (50 + prog * 50).toFixed(1) + '%';
+    document.getElementById('calTimer').textContent = rem;
+    document.getElementById('calPhaseLabel').textContent = 'PHASE 2/2 · FOCUS';
+
+  } else if (state === 'done') {
+    CAL.active = false;
+    document.getElementById('calBar').style.width = '100%';
+    document.getElementById('calTimer').textContent = '✓';
+    document.getElementById('calPhaseLabel').textContent = 'COMPLETE';
+    document.getElementById('calCancelBtn').style.display = 'none';
+    document.getElementById('calCloseBtn').style.display = 'inline-block';
+    if (d.result) {
+      const r  = d.result;
+      const t  = r.thresholds;
+      const q  = r.quality;
+      document.getElementById('calResult').style.display = 'block';
+      document.getElementById('calResult').innerHTML =
+        `휴식 집중도: <b>${r.relax.conc_mean}</b> ± ${r.relax.conc_std}<br>` +
+        `집중 집중도: <b>${r.focus.conc_mean}</b> ± ${r.focus.conc_std}<br>` +
+        `임계값: Low=<b>${t.th_low}</b>  High=<b>${t.th_high}</b>  Slope=<b>${t.slope}</b><br>` +
+        `품질: <b style="color:${q.grade==='A'?'#80ffb0':q.grade==='B'?'#80d0ff':'#ffb080'}">${q.grade}</b> (${q.score}/100)`;
+    } else if (state === 'loaded') {
+      document.getElementById('calModal').classList.remove('show');
+      // settings will be applied via separate settings message
+    }
+
+  } else if (state === 'not_found') {
+    alert('저장된 캘리브레이션이 없습니다. 먼저 캘리브레이션을 진행하세요.');
+  }
+}
+
+// ── Experiment Protocol ───────────────────────────────────────────────────────
+const EXP = { active: false, phaseIdx: 0, phaseTotal: 1, markerCount: 0 };
+
+function startExperiment() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alert('서버에 연결되어 있지 않습니다.');
+    return;
+  }
+  const protocol = document.getElementById('expProtocolSel').value;
+  EXP.active = true;
+  EXP.markerCount = 0;
+  document.getElementById('btnExp').style.display     = 'none';
+  document.getElementById('btnExpStop').style.display = 'inline-block';
+  document.getElementById('btnMarker').style.display  = 'inline-block';
+  document.getElementById('expBar').style.display     = 'block';
+  ws.send(JSON.stringify({ type: 'exp_start', protocol }));
+}
+
+function stopExperiment() {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  ws.send(JSON.stringify({ type: 'exp_stop' }));
+  _expDone();
+}
+
+function addManualMarker() {
+  if (!EXP.active || !ws || ws.readyState !== WebSocket.OPEN) return;
+  EXP.markerCount++;
+  ws.send(JSON.stringify({ type: 'exp_marker', label: `marker_${EXP.markerCount}` }));
+  // Flash the marker button
+  const btn = document.getElementById('btnMarker');
+  btn.style.background = 'rgba(255,200,50,0.4)';
+  setTimeout(() => { btn.style.background = 'rgba(255,200,50,0.1)'; }, 300);
+}
+
+// Keyboard shortcut: Space = manual marker
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' && EXP.active && document.activeElement.tagName !== 'INPUT') {
+    e.preventDefault();
+    addManualMarker();
+  }
+});
+
+function _expDone() {
+  EXP.active = false;
+  document.getElementById('btnExp').style.display     = 'inline-block';
+  document.getElementById('btnExpStop').style.display = 'none';
+  document.getElementById('btnMarker').style.display  = 'none';
+  document.getElementById('expBar').style.display     = 'none';
+  document.body.style.borderTop = '';
+}
+
+function _handleExperiment(d) {
+  const state = d.state;
+
+  if (state === 'running' || d.phase) {
+    // Update phase bar
+    const bar   = document.getElementById('expProgressBar');
+    const timer = document.getElementById('expTimer');
+    const phase = document.getElementById('expPhaseName');
+    const count = document.getElementById('expPhaseCount');
+    const instr = document.getElementById('expInstruction');
+
+    if (d.phase)       phase.textContent = d.phase;
+    if (d.instruction) instr.textContent = d.instruction;
+    if (d.color)       bar.style.background = d.color;
+
+    const progress  = d.phase_progress || 0;
+    const totalProg = ((d.phase_idx || 0) + progress) / (d.phase_total || 1);
+    // Smooth transition: 1s linear so bar glides between server ticks
+    bar.style.transition = d.transition ? 'none' : 'width 1s linear';
+    bar.style.width = (totalProg * 100).toFixed(2) + '%';
+
+    if (d.remaining !== undefined) {
+      // Count down locally between server ticks for smooth display
+      clearInterval(EXP._timerInterval);
+      let rem = d.remaining;
+      timer.textContent = Math.ceil(rem) + 's';
+      EXP._timerInterval = setInterval(() => {
+        rem -= 0.25;
+        if (rem > 0) timer.textContent = Math.ceil(rem) + 's';
+        else clearInterval(EXP._timerInterval);
+      }, 250);
+    }
+    if (d.phase_idx !== undefined)
+      count.textContent = `${d.phase_idx + 1}/${d.phase_total}`;
+
+    const typeColors = { baseline: '#204080', relax: '#2060b0',
+                         task: '#b04020', rest: '#204060' };
+    document.body.style.borderTop =
+      `2px solid ${typeColors[d.phase_type] || '#3060ff'}`;
+
+    if (d.transition) {
+      document.getElementById('expBar').style.opacity = '0.5';
+      setTimeout(() => { document.getElementById('expBar').style.opacity = '1'; }, 400);
+    }
+
+  } else if (state === 'done' || state === 'stopped') {
+    _expDone();
+    if (d.summary) {
+      const s = d.summary;
+      const lines = Object.entries(s.phase_stats || {}).map(
+        ([k,v]) => `${k}: ${v.mean_concentration}% avg (${v.n_samples} samples)`
+      ).join('\n');
+      alert(`실험 완료!\n\n${lines}\n\n마커: ${s.n_markers}개, V-패턴: ${s.n_vpattern}개`);
+    }
+
+  } else if (state === 'saved') {
+    console.log('[EXP] Saved:', d.path);
+  }
+}
+
+// Patch the existing onmessage to handle calibration messages
+const _origOnMsg = typeof onWsMessage === 'function' ? onWsMessage : null;
+</script>
+</body>
+</html>
