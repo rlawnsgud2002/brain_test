@@ -43,10 +43,10 @@ LR          = 1e-3
 DEVICE      = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # V-pattern labelling thresholds (on concentration 0-100)
-DROP_TH   = 18   # minimum drop in concentration to qualify
-RISE_TH   = 12   # minimum recovery after trough
-DROP_WIN  = 16   # frames (4s) to measure the drop
-RISE_WIN  = 12   # frames (3s) to measure the recovery
+DROP_TH   = 10   # minimum drop in concentration to qualify
+RISE_TH   = 8    # minimum recovery after trough
+DROP_WIN  = 40   # frames (~10s) to measure the drop
+RISE_WIN  = 30   # frames (~7.5s) to measure the recovery
 
 EMOTIV_IDX = [EMOTIV_TO_DEAP[ch] for ch in EMOTIV_CHS]
 

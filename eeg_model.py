@@ -22,10 +22,10 @@ class VPatternRuleBased:
     Sliding-window rule-based V-pattern detector.
     Works on concentration history (0-100 scalar per frame).
     """
-    DROP_TH  = 18   # minimum concentration drop to qualify as V-start
-    RISE_TH  = 12   # minimum recovery to confirm V
-    DROP_WIN = 16   # frames to look back for the drop  (~4s @ 4fps)
-    RISE_WIN = 12   # frames to look ahead for recovery (~3s)
+    DROP_TH  = 10   # minimum concentration drop to qualify as V-start
+    RISE_TH  = 8    # minimum recovery to confirm V
+    DROP_WIN = 60   # frames to look back for the drop  (~15s @ 4fps)
+    RISE_WIN = 30   # frames to look ahead for recovery (~7.5s)
     SMOOTH   = 4    # simple moving average window
 
     def __init__(self, maxlen=120):

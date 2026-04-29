@@ -139,8 +139,8 @@
           <input type="range" id="thHigh" min="50" max="100" value="70" oninput="updateCfg()">
         </div>
         <div class="slider-row">
-          <label>Δt <span id="dtv">3</span>s</label>
-          <input type="range" id="dtSlider" min="1" max="10" value="3" oninput="updateCfg()">
+          <label>Δt <span id="dtv">15</span>s</label>
+          <input type="range" id="dtSlider" min="1" max="30" value="15" oninput="updateCfg()">
         </div>
         <div class="slider-row">
           <label>Manual <span id="mv">50</span>%</label>
@@ -240,7 +240,7 @@
 <script>
 // ── CONFIG ────────────────────────────────────────────────
 const CFG = {
-  pw: 'admin', thLow: 30, thHigh: 70, dt: 3,
+  pw: 'admin', thLow: 30, thHigh: 70, dt: 15,
   manual: false, manVal: 50,
   electrodes: [
     {n:'AF3',x:-0.26,y:-0.60},{n:'AF4',x:0.26,y:-0.60},
@@ -675,7 +675,7 @@ function simStep() {
     const elapsed = (Date.now() - CFG.vLowTime) / 1000;
     const recent = CFG.history.slice(-8);
     const slope = recent.length > 3 ? (recent[recent.length-1] - recent[recent.length-4]) / 3 : 0;
-    if (elapsed < CFG.dt && slope > 1.5) {
+    if (elapsed < CFG.dt && slope > 0.3) {
       toggleControl(avg);
     }
     CFG.vLow = false;
@@ -890,7 +890,7 @@ function updateCfg() {
   // 3순위: 변경된 설정을 서버에 전송해서 영속화
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ type: 'settings',
-      settings: { thLow: CFG.thLow, thHigh: CFG.thHigh, dt: CFG.dt, slope: 1.5 }
+      settings: { thLow: CFG.thLow, thHigh: CFG.thHigh, dt: CFG.dt, slope: 0.3 }
     }));
   }
 }
@@ -900,9 +900,8 @@ function updateManual() {
   document.getElementById('mv').textContent = CFG.manVal;
 }
 function forceV() {
-  toggleControl(bands.concentration ?? 50);
   if (CFG.dataSource !== 'ws') {
-    vPhase = { step: 0, total: 30 };
+    vPhase = { step: 0, total: 60 };
     CFG.manual = false;
     document.getElementById('manSlider').value = 50;
   }
