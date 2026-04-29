@@ -81,6 +81,13 @@ DEAP_IDX   = [EMOTIV_TO_DEAP[ch] for ch in EMOTIV_CHS]
 
 FS = 128
 
+# ── Muse S Athena channel config ──────────────────────────────────────────────
+# EEG channels: TP9, AF7, AF8, TP10  |  Reference: FP1, FP2
+MUSE_CHS    = ['TP9', 'AF7', 'FP1', 'FP2', 'AF8', 'TP10']
+MUSE_EEG    = ['TP9', 'AF7', 'AF8', 'TP10']   # active EEG only
+MUSE_EEG_IDX = [0, 1, 4, 5]                   # indices in MUSE_CHS
+FS_MUSE     = 256
+
 # Spatial weights per electrode for synthesizing 14ch from band powers
 # (frontal electrodes more sensitive to beta/concentration)
 SPATIAL_W = [1.2,1.2, 1.1,1.1,1.1,1.1, 1.0,1.0, 0.8,0.8, 0.7,0.7, 0.6,0.6]
@@ -719,6 +726,103 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
             'fallback':'sim'}))
         await stream_sim(ws)
 
+# ── Muse S Athena — muselsl / pylsl ───────────────────────────────────────────
+async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
+    """
+    Streams live EEG from Muse S Athena via Lab Streaming Layer (LSL).
+
+    Requirements:
+      pip install muselsl pylsl
+      1. Pair Muse via Bluetooth
+      2. Run in a separate terminal: muselsl stream
+      3. Then start the server with --source muse
+
+    Channels sent: TP9, AF7, FP1(ref), FP2(ref), AF8, TP10  (6 total)
+    Active EEG:    TP9, AF7, AF8, TP10  (indices 0,1,4,5)
+    Sampling rate: 256 Hz
+    """
+    try:
+        from pylsl import StreamInlet, resolve_byprop
+    except ImportError:
+        await ws.send(json.dumps({'type':'error',
+            'message':'pylsl not installed. Run: pip install muselsl pylsl'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder,
+                         exp_holder=exp_holder)
+        return
+
+    print("[MUSE] Searching for Muse LSL stream...")
+    await ws.send(json.dumps({'type':'status',
+        'message':'Searching for Muse S LSL stream... (run: muselsl stream)'}))
+
+    try:
+        streams = resolve_byprop('type', 'EEG', timeout=10)
+        if not streams:
+            raise RuntimeError("No Muse LSL stream found. Run: muselsl stream")
+        inlet = StreamInlet(streams[0])
+        info  = inlet.info()
+        print(f"[MUSE] Connected: {info.name()} @ {info.nominal_srate()}Hz")
+        await ws.send(json.dumps({'type':'status',
+            'message':f'Muse S connected: {info.name()} @ {info.nominal_srate()}Hz',
+            'source': 'muse'}))
+
+        # Buffer for 256-sample window (1s)
+        WIN = 256
+        buf = []
+
+        while True:
+            sample, _ = inlet.pull_sample(timeout=1.0)
+            if sample is None:
+                continue
+            buf.append(sample[:6])   # TP9, AF7, FP1, FP2, AF8, TP10
+            if len(buf) < WIN:
+                continue
+
+            eeg_arr = np.array(buf[-WIN:]).T   # (6, 256)
+            eeg_eeg = eeg_arr[MUSE_EEG_IDX]    # (4, 256) active EEG only
+
+            # Preprocess (adapt preprocess for 4ch/256Hz)
+            _save_fs = FS
+            import eeg_server as _self
+            _self.FS = FS_MUSE
+            try:
+                clean, artifacts = preprocess(eeg_eeg, notch_hz=50)
+            finally:
+                _self.FS = _save_fs
+
+            bands_out = compute_bands(clean, FS_MUSE)
+
+            # Build 6-channel vals (ref channels get avg value)
+            avg_val = float(np.mean([bands_out['concentration']] * 4))
+            channels = [0.0] * 6
+            for pos, idx in enumerate(MUSE_EEG_IDX):
+                ch_conc = float(np.clip(
+                    (bandpower(clean[pos], FS_MUSE, 12, 30) /
+                     (bandpower(clean[pos], FS_MUSE, 8, 12) + 1e-9) - 0.3) * 40 + 50, 0, 100))
+                channels[idx] = ch_conc
+            # ref channels mirror avg
+            channels[2] = channels[3] = avg_val
+
+            vdet = detector[0] if detector else None
+            v_result = vdet.push(bands_out['concentration']) if vdet else {'v_prob': 0.0, 'v_active': False}
+
+            payload = {
+                'type': 'eeg',
+                'channels': [round(v, 2) for v in channels],
+                'bands': bands_out,
+                'artifacts': artifacts,
+                'vpattern': v_result,
+                'source': 'muse'
+            }
+            await ws.send(json.dumps(payload))
+            await asyncio.sleep(0.25)   # ~4fps update
+
+    except Exception as e:
+        print(f"[MUSE] Error: {e}")
+        await ws.send(json.dumps({'type':'error',
+            'message': f'Muse error: {e}. Falling back to simulation.'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder,
+                         exp_holder=exp_holder)
+
 # ── Settings + Calibration + Experiment receiver ──────────────────────────────
 def _make_recv(ws, calibrator_holder, exp_holder):
     """
@@ -869,6 +973,9 @@ def make_handler(source, dat_file, trial, speed,
             elif source == 'emotiv':
                 await stream_emotiv(ws, detector=detector, cal_holder=calibrator_holder,
                                     exp_holder=exp_holder)
+            elif source == 'muse':
+                await stream_muse(ws, detector=detector, cal_holder=calibrator_holder,
+                                  exp_holder=exp_holder)
             else:
                 await stream_sim(ws, detector=detector, cal_holder=calibrator_holder,
                                  exp_holder=exp_holder)
@@ -887,7 +994,7 @@ def make_handler(source, dat_file, trial, speed,
 def main():
     parser = argparse.ArgumentParser(
         description='EEG WebSocket Server — Brain Concentration Visualization')
-    parser.add_argument('--source', choices=['sim','deap','mental','emotiv'],
+    parser.add_argument('--source', choices=['sim','deap','mental','emotiv','muse'],
                         default='sim', help='Data source')
     parser.add_argument('--file',  default=None, help='Data file path')
     parser.add_argument('--trial', type=int,   default=0,   help='DEAP trial index (0-39)')
@@ -930,6 +1037,9 @@ def main():
     if args.source == 'emotiv':
         print(" NOTE: Requires Emotiv App running + Client ID/Secret")
         print("       Edit CLIENT_ID / CLIENT_SECRET in stream_emotiv()")
+    if args.source == 'muse':
+        print(" NOTE: Requires Muse S paired via Bluetooth + muselsl running")
+        print("       pip install muselsl pylsl  →  muselsl stream")
     print(" Open mockup_3d.html in browser")
     print(" Press Ctrl+C to stop")
     print("=" * 60)

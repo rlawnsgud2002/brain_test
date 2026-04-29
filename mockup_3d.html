@@ -146,11 +146,16 @@
           <label>Manual <span id="mv">50</span>%</label>
           <input type="range" id="manSlider" min="0" max="100" value="50" oninput="updateManual()">
         </div>
+        <div style="font-size:9px;color:#4060aa;letter-spacing:1px;margin-bottom:2px">DEVICE</div>
+        <select id="devSel" onchange="onDeviceChange()" style="margin-bottom:6px">
+          <option value="emotiv">EMOTIV EPOC X (14ch)</option>
+          <option value="muse">MUSE S ATHENA (4ch)</option>
+        </select>
         <select id="srcSel" onchange="onSourceChange()">
           <option value="sim">SIMULATION</option>
           <option value="deap">DEAP DATASET</option>
           <option value="mental">MENTAL STATE CSV</option>
-          <option value="device">EMOTIV EPOC X</option>
+          <option value="device">EMOTIV EPOC X (LIVE)</option>
         </select>
         <div id="wsStatusRow" style="display:none;font-size:10px;color:#6480cc;margin-top:4px;text-align:center">
           <span class="ws-dot" id="wsDot"></span><span id="wsStatusText">CONNECTING...</span>
@@ -238,33 +243,71 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// ── DEVICE PROFILES ───────────────────────────────────────
+const DEVICE_PROFILES = {
+  emotiv: {
+    label: 'Emotiv EPOC X', nCh: 14, fs: 128,
+    sources: [
+      {v:'sim',    l:'SIMULATION'},
+      {v:'deap',   l:'DEAP DATASET'},
+      {v:'mental', l:'MENTAL STATE CSV'},
+      {v:'device', l:'EMOTIV EPOC X (LIVE)'}
+    ],
+    electrodes: [
+      {n:'AF3',x:-0.26,y:-0.60},{n:'AF4',x:0.26,y:-0.60},
+      {n:'F7', x:-0.72,y:-0.48},{n:'F3', x:-0.38,y:-0.32},
+      {n:'F4', x:0.38, y:-0.32},{n:'F8', x:0.72, y:-0.48},
+      {n:'FC5',x:-0.59,y:-0.13},{n:'FC6',x:0.59, y:-0.13},
+      {n:'T7', x:-0.85,y:0.05}, {n:'T8', x:0.85, y:0.05},
+      {n:'P7', x:-0.66,y:0.50}, {n:'P8', x:0.66, y:0.50},
+      {n:'O1', x:-0.26,y:0.72}, {n:'O2', x:0.26, y:0.72}
+    ],
+    activeIdx: [0,1,2,3,4,5,6,7,8,9,10,11,12,13],
+    regions: [
+      {name:'FRONTAL',  idxs:[0,1,2,3,4,5],  color:'#6688ff'},
+      {name:'CENTRAL',  idxs:[6,7],           color:'#44ddaa'},
+      {name:'TEMPORAL', idxs:[8,9],           color:'#ffaa44'},
+      {name:'PARIETAL', idxs:[10,11],         color:'#cc88ff'},
+      {name:'OCCIPITAL',idxs:[12,13],         color:'#ff6677'}
+    ]
+  },
+  muse: {
+    label: 'Muse S Athena', nCh: 6, fs: 256,
+    sources: [
+      {v:'sim',    l:'SIMULATION'},
+      {v:'mental', l:'MENTAL STATE CSV'},
+      {v:'muse',   l:'MUSE S (LIVE)'}
+    ],
+    electrodes: [
+      {n:'TP9',  x:-0.85,y:0.05},
+      {n:'AF7',  x:-0.60,y:-0.50},
+      {n:'FP1',  x:-0.20,y:-0.72, ref:true},
+      {n:'FP2',  x: 0.20,y:-0.72, ref:true},
+      {n:'AF8',  x: 0.60,y:-0.50},
+      {n:'TP10', x: 0.85,y:0.05}
+    ],
+    activeIdx: [0,1,4,5],
+    regions: [
+      {name:'FRONTAL',  idxs:[1,2,3,4], color:'#6688ff'},
+      {name:'TEMPORAL', idxs:[0,5],     color:'#ffaa44'}
+    ]
+  }
+};
+
 // ── CONFIG ────────────────────────────────────────────────
 const CFG = {
   pw: 'admin', thLow: 30, thHigh: 70, dt: 15,
   manual: false, manVal: 50,
-  electrodes: [
-    {n:'AF3',x:-0.26,y:-0.60},{n:'AF4',x:0.26,y:-0.60},
-    {n:'F7', x:-0.72,y:-0.48},{n:'F3', x:-0.38,y:-0.32},
-    {n:'F4', x:0.38, y:-0.32},{n:'F8', x:0.72, y:-0.48},
-    {n:'FC5',x:-0.59,y:-0.13},{n:'FC6',x:0.59, y:-0.13},
-    {n:'T7', x:-0.85,y:0.05}, {n:'T8', x:0.85, y:0.05},
-    {n:'P7', x:-0.66,y:0.50}, {n:'P8', x:0.66, y:0.50},
-    {n:'O1', x:-0.26,y:0.72}, {n:'O2', x:0.26, y:0.72}
-  ],
+  activeDevice: 'emotiv',
+  electrodes: DEVICE_PROFILES.emotiv.electrodes,
   vals: new Float32Array(14).fill(50),
   history: [],
   vLow: false, vLowTime: 0,
   dataSource: 'sim'  // 'sim' | 'ws'
 };
 
-// ── BRAIN REGION DEFINITIONS (electrode index groups) ─────
-const REGIONS = [
-  { name:'FRONTAL',  idxs:[0,1,2,3,4,5],  color:'#6688ff' },
-  { name:'CENTRAL',  idxs:[6,7],           color:'#44ddaa' },
-  { name:'TEMPORAL', idxs:[8,9],           color:'#ffaa44' },
-  { name:'PARIETAL', idxs:[10,11],         color:'#cc88ff' },
-  { name:'OCCIPITAL',idxs:[12,13],         color:'#ff6677' }
-];
+// Convenience getter — always reflects active device
+function getRegions() { return DEVICE_PROFILES[CFG.activeDevice].regions; }
 
 // ── SESSION REPORT TRACKER ────────────────────────────────
 const RPT = {
@@ -382,6 +425,40 @@ function wsConnect() {
     wsReTimer = setTimeout(wsConnect, 3000);
   };
   ws.onerror = () => wsSetStatus('error');
+}
+function onDeviceChange() {
+  const dev = document.getElementById('devSel').value;
+  CFG.activeDevice = dev;
+  const profile = DEVICE_PROFILES[dev];
+
+  // Rebuild source selector for this device
+  const srcSel = document.getElementById('srcSel');
+  srcSel.innerHTML = '';
+  profile.sources.forEach(({v, l}) => {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = l;
+    srcSel.appendChild(opt);
+  });
+  // Reset to sim
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  clearTimeout(wsReTimer);
+  CFG.dataSource = 'sim';
+  document.getElementById('wsStatusRow').style.display = 'none';
+  CFG.vals = new Float32Array(14).fill(50);
+
+  // Toggle 3D visualization
+  const isMuse = dev === 'muse';
+  // Brain: show for Emotiv, hide for Muse
+  if (typeof brain !== 'undefined') brain.visible = !isMuse;
+  // Emotiv electrode meshes
+  if (typeof eMeshes !== 'undefined') eMeshes.forEach(m => m.visible = !isMuse);
+  if (typeof glowMeshes !== 'undefined') glowMeshes.forEach(m => m.visible = !isMuse);
+  // Muse meshes
+  if (typeof museEMeshes !== 'undefined') museEMeshes.forEach(m => m.visible = isMuse);
+  if (typeof museGlows !== 'undefined') museGlows.forEach(m => m.visible = isMuse);
+  if (typeof museBandMesh !== 'undefined') museBandMesh.visible = isMuse;
+
+  CFG.electrodes = profile.electrodes;
 }
 function onSourceChange() {
   const src = document.getElementById('srcSel').value;
@@ -524,6 +601,49 @@ CFG.electrodes.forEach((a, i) => {
   });
 });
 
+// ── MUSE S HEADBAND + ELECTRODES (hidden by default) ─────
+const MUSE_ELECS = DEVICE_PROFILES.muse.electrodes;
+const museEMats = MUSE_ELECS.map(e => new THREE.MeshStandardMaterial({
+  color: e.ref ? 0x666666 : 0x44aaff,
+  emissive: e.ref ? 0x111111 : 0x224488,
+  emissiveIntensity: e.ref ? 0.15 : 0.6,
+  roughness: 0.3, metalness: 0.5
+}));
+const museEMeshes = MUSE_ELECS.map((e, i) => {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(e.ref ? 0.035 : 0.055, 12, 12), museEMats[i]);
+  m.position.copy(toSphere(e.x, e.y, 1.03));
+  m.visible = false;
+  scene.add(m);
+  return m;
+});
+const museGlows = MUSE_ELECS.map((e, i) => {
+  const mat = new THREE.SpriteMaterial({
+    map: glowTex, transparent: true,
+    opacity: e.ref ? 0 : 0.5, blending: THREE.AdditiveBlending
+  });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.set(0.35, 0.35, 1);
+  sp.position.copy(toSphere(e.x, e.y, 1.03));
+  sp.visible = false;
+  scene.add(sp);
+  return sp;
+});
+const _bandCurve = new THREE.CatmullRomCurve3(MUSE_ELECS.map(e => toSphere(e.x, e.y, 1.04)));
+const museBandMat = new THREE.MeshPhongMaterial({
+  color: 0x888888, transparent: true, opacity: 0.65, shininess: 40
+});
+const museBandMesh = new THREE.Mesh(
+  new THREE.TubeGeometry(_bandCurve, 50, 0.028, 10, false),
+  museBandMat
+);
+museBandMesh.visible = false;
+scene.add(museBandMesh);
+
+// Label markers for inactive Emotiv electrodes when in Muse mode
+const inactiveMarkerMat = new THREE.MeshBasicMaterial({
+  color: 0x333355, transparent: true, opacity: 0.25
+});
+
 // ── BRAIN REGIONS ─────────────────────────────────────────
 function rLine(x0, x1, ny, R=1.015, col=0x4488ff, op=0.4, n=60) {
   const pts = [];
@@ -632,24 +752,25 @@ let vPhase = null;
 let controlActive = false;
 
 function simStep() {
+  const nch = DEVICE_PROFILES[CFG.activeDevice].nCh;
   // WS 연결 중이면 vals는 ws.onmessage에서 이미 업데이트됨 → 시뮬레이션 스킵
   if (CFG.dataSource !== 'ws') {
     if (vPhase) {
       vPhase.step++;
       const t = vPhase.step / vPhase.total;
       const conc = t < 0.4 ? 15 + t*10 : 15 + (t-0.4)/0.6 * 85;
-      for (let i=0; i<14; i++) CFG.vals[i] = conc + (Math.random()-0.5)*12;
+      for (let i=0; i<nch; i++) CFG.vals[i] = conc + (Math.random()-0.5)*12;
       if (vPhase.step >= vPhase.total) vPhase = null;
     } else if (CFG.manual) {
-      for (let i=0; i<14; i++) CFG.vals[i] = CFG.manVal + (Math.random()-0.5)*8;
+      for (let i=0; i<nch; i++) CFG.vals[i] = CFG.manVal + (Math.random()-0.5)*8;
     } else {
-      for (let i=0; i<14; i++) {
+      for (let i=0; i<nch; i++) {
         CFG.vals[i] += (Math.random()-0.5)*6;
         CFG.vals[i] = Math.max(5, Math.min(95, CFG.vals[i]));
       }
     }
     // simulate band powers (only in sim mode)
-    const focus = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
+    const focus = Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch/100;
     bands.alpha = 60 - focus*40 + (Math.random()-0.5)*10;
     bands.beta  = 30 + focus*50 + (Math.random()-0.5)*10;
     bands.theta = 40 + (Math.random()-0.5)*15;
@@ -658,7 +779,7 @@ function simStep() {
     Object.keys(bands).forEach(k => bands[k] = Math.max(0, Math.min(100, bands[k])));
   }
 
-  const avg = CFG.vals.reduce((s,v)=>s+v,0)/14;
+  const avg = Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
   CFG.history.push(avg);
   if (CFG.history.length > 120) CFG.history.shift();
   rptTick(avg);
@@ -716,21 +837,42 @@ function toggleControl(concAtEvent = 50) {
 
 // ── UPDATE 3D VISUALS ─────────────────────────────────────
 function update3D() {
-  CFG.electrodes.forEach((e, i) => {
-    const t = CFG.vals[i] / 100;
-    const c = jet(t);
-    eMats[i].color.setRGB(c.r, c.g, c.b);
-    eMats[i].emissive.setRGB(c.r*0.5, c.g*0.5, c.b*0.5);
-    eMats[i].emissiveIntensity = 0.4 + t * 1.2;
-    glowMeshes[i].material.color.setRGB(c.r, c.g, c.b);
-    glowMeshes[i].material.opacity = 0.3 + t * 0.7;
-    const s = 0.25 + t * 0.45;
-    glowMeshes[i].scale.set(s, s, 1);
-  });
-
-  // Brain sphere pulse with avg
-  const avg = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
-  brainMat.opacity = 0.12 + avg * 0.14;
+  const isMuse = CFG.activeDevice === 'muse';
+  if (isMuse) {
+    MUSE_ELECS.forEach((e, i) => {
+      const t = CFG.vals[i] / 100;
+      const c = e.ref ? {r:0.3,g:0.3,b:0.4} : jet(t);
+      museEMats[i].color.setRGB(c.r, c.g, c.b);
+      if (!e.ref) {
+        museEMats[i].emissive.setRGB(c.r*0.5, c.g*0.5, c.b*0.5);
+        museEMats[i].emissiveIntensity = 0.4 + t * 1.2;
+        museGlows[i].material.color.setRGB(c.r, c.g, c.b);
+        museGlows[i].material.opacity = 0.3 + t * 0.7;
+        const s = 0.28 + t * 0.45;
+        museGlows[i].scale.set(s, s, 1);
+      }
+    });
+    // Tint headband by avg concentration
+    const profile = DEVICE_PROFILES.muse;
+    const avgT = profile.activeIdx.reduce((s,i) => s + CFG.vals[i], 0) / profile.activeIdx.length / 100;
+    const bc = jet(avgT);
+    museBandMat.color.setRGB(0.4 + bc.r*0.4, 0.4 + bc.g*0.4, 0.4 + bc.b*0.4);
+  } else {
+    CFG.electrodes.forEach((e, i) => {
+      const t = CFG.vals[i] / 100;
+      const c = jet(t);
+      eMats[i].color.setRGB(c.r, c.g, c.b);
+      eMats[i].emissive.setRGB(c.r*0.5, c.g*0.5, c.b*0.5);
+      eMats[i].emissiveIntensity = 0.4 + t * 1.2;
+      glowMeshes[i].material.color.setRGB(c.r, c.g, c.b);
+      glowMeshes[i].material.opacity = 0.3 + t * 0.7;
+      const s = 0.25 + t * 0.45;
+      glowMeshes[i].scale.set(s, s, 1);
+    });
+    // Brain sphere pulse with avg
+    const avg = CFG.vals.reduce((s,v)=>s+v,0)/14/100;
+    brainMat.opacity = 0.12 + avg * 0.14;
+  }
 }
 
 // ── UI UPDATE ─────────────────────────────────────────────
@@ -771,8 +913,10 @@ function updateUI(avg) {
     document.getElementById('b'+cap+'Bar').style.width = relPct.toFixed(1) + '%';
   });
 
-  // Hemisphere balance (L: AF3,F7,F3,FC5,T7,P7,O1 / R: AF4,F8,F4,FC6,T8,P8,O2)
-  const lIdx = [0,2,3,6,8,10,12], rIdx = [1,4,5,7,9,11,13];
+  // Hemisphere balance — left/right split from active profile
+  const isMuse = CFG.activeDevice === 'muse';
+  const lIdx = isMuse ? [0,1]   : [0,2,3,6,8,10,12];   // TP9,AF7 | Emotiv left
+  const rIdx = isMuse ? [4,5]   : [1,4,5,7,9,11,13];   // AF8,TP10 | Emotiv right
   const lAvg = lIdx.reduce((s,i)=>s+CFG.vals[i],0)/lIdx.length;
   const rAvg = rIdx.reduce((s,i)=>s+CFG.vals[i],0)/rIdx.length;
   document.getElementById('lHemiBar').style.width = lAvg+'%';
@@ -783,7 +927,7 @@ function updateUI(avg) {
   document.getElementById('hemiStatus').textContent = diff < 8 ? 'BALANCED' : lAvg > rAvg ? 'L DOMINANT' : 'R DOMINANT';
 
   // Brain region averages (C)
-  document.getElementById('regionList').innerHTML = REGIONS.map(r => {
+  document.getElementById('regionList').innerHTML = getRegions().map(r => {
     const rv = r.idxs.reduce((s,i) => s + CFG.vals[i], 0) / r.idxs.length;
     const c = jet(rv/100);
     const col = `rgb(${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)})`;
@@ -799,9 +943,12 @@ function updateUI(avg) {
   // Electrode list
   const el = document.getElementById('electrodeList');
   el.innerHTML = CFG.electrodes.map((e,i) => {
-    const v = CFG.vals[i], t = v/100, cc = jet(t);
-    const col = `rgb(${Math.round(cc.r*255)},${Math.round(cc.g*255)},${Math.round(cc.b*255)})`;
-    return `<div style="display:flex;justify-content:space-between"><span style="color:#6480cc">${e.n}</span><span style="color:${col}">${v.toFixed(1)}</span></div>`;
+    const active = !e.ref;
+    const v = active ? CFG.vals[i] : null;
+    const col = active ? (() => { const t=v/100, cc=jet(t); return `rgb(${Math.round(cc.r*255)},${Math.round(cc.g*255)},${Math.round(cc.b*255)})`; })() : '#444';
+    const label = e.ref ? `${e.n} <span style="color:#333;font-size:9px">REF</span>` : e.n;
+    const valTxt = active ? v.toFixed(1) : '—';
+    return `<div style="display:flex;justify-content:space-between"><span style="color:${active?'#6480cc':'#334'};">${label}</span><span style="color:${col}">${valTxt}</span></div>`;
   }).join('');
 }
 
