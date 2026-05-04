@@ -726,6 +726,159 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
             'fallback':'sim'}))
         await stream_sim(ws)
 
+# ── TGAM / NeuroSky — ThinkGear Serial Protocol ───────────────────────────────
+async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_holder=None):
+    """
+    Reads TGAM (ThinkGear ASIC Module) via serial port.
+    Compatible: MindWave Mobile (BT serial), MindWave USB, raw TGAM UART.
+
+    Requirements: pip install pyserial
+
+    Setup:
+      Windows : --serial-port COM3
+      Linux   : --serial-port /dev/ttyUSB0
+      Mac     : --serial-port /dev/tty.MindWave-DevB
+
+    ThinkGear Communication Protocol (TGCP):
+      Sync:     0xAA 0xAA
+      Length:   1 byte  (payload size)
+      Payload:  N bytes (code-value pairs)
+      Checksum: 1 byte  = ~sum(payload) & 0xFF
+
+    Payload codes:
+      0x02  Poor Signal    (0=good, 200=no contact)
+      0x04  Attention      (eSense 0-100)
+      0x05  Meditation     (eSense 0-100)
+      0x16  Blink Strength (0-255)
+      0x80  Raw EEG        (2 bytes big-endian int16, 512Hz)
+      0x83  Band Powers    (24 bytes: 8×3-byte uint — delta,theta,
+                            lowAlpha,highAlpha,lowBeta,highBeta,lowGamma,midGamma)
+    """
+    try:
+        import serial
+    except ImportError:
+        await ws.send(json.dumps({'type': 'error',
+            'message': 'pyserial not installed. Run: pip install pyserial'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder,
+                         exp_holder=exp_holder)
+        return
+
+    port = serial_port or '/dev/ttyUSB0'
+    print(f"[TGAM] Opening serial port: {port}")
+    await ws.send(json.dumps({'type': 'status',
+        'message': f'Connecting to TGAM on {port}...'}))
+
+    try:
+        ser = serial.Serial(port, baudrate=57600, timeout=1)
+        await ws.send(json.dumps({'type': 'status',
+            'message': f'TGAM connected on {port}. Streaming...', 'source': 'tgam'}))
+        print(f"[TGAM] Connected on {port}")
+
+        attention = 50.0
+        meditation = 50.0
+        poor_signal = 200
+        bands_raw = [0] * 8   # delta,theta,lowA,highA,lowB,highB,lowG,midG
+        raw_buf = []
+
+        def parse_payload(payload):
+            nonlocal attention, meditation, poor_signal, bands_raw
+            i = 0
+            while i < len(payload):
+                code = payload[i]; i += 1
+                if code == 0x02:                     # poor signal
+                    poor_signal = payload[i]; i += 1
+                elif code == 0x04:                   # attention
+                    attention = float(payload[i]); i += 1
+                elif code == 0x05:                   # meditation
+                    meditation = float(payload[i]); i += 1
+                elif code == 0x16:                   # blink
+                    i += 1
+                elif code == 0x80:                   # raw EEG (2 bytes)
+                    if i + 1 < len(payload):
+                        raw_val = int.from_bytes(payload[i:i+2], 'big', signed=True)
+                        raw_buf.append(raw_val)
+                        if len(raw_buf) > 512:
+                            raw_buf.pop(0)
+                    i += 2
+                elif code == 0x83:                   # band powers (24 bytes)
+                    for b in range(8):
+                        bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
+                        i += 3
+                else:
+                    break
+
+        async def send_loop():
+            while True:
+                # Normalise band powers to 0-100 range
+                bp_max = max(bands_raw) or 1
+                d,th,la,ha,lb,hb,lg,mg = [min(100, v/bp_max*100) for v in bands_raw]
+                alpha = (la + ha) / 2
+                beta  = (lb + hb) / 2
+                gamma = (lg + mg) / 2
+
+                # Concentration from attention eSense (direct from chip)
+                conc = attention
+
+                bands_out = {
+                    'delta': round(d, 1), 'theta': round(th, 1),
+                    'alpha': round(alpha, 1), 'beta': round(beta, 1),
+                    'gamma': round(gamma, 1),
+                    'concentration': round(conc, 1),
+                    'engagement_index': round(beta / (alpha + th + 1e-9), 3),
+                    'faa': 0.0,   # single channel — FAA not available
+                    'attention': round(attention, 1),
+                    'meditation': round(meditation, 1),
+                }
+                artifacts = {'emg_warn': poor_signal > 50, 'poor_signal': poor_signal}
+
+                vdet = detector[0] if detector else None
+                v_result = vdet.push(conc) if vdet else {'v_prob': 0.0, 'v_active': False}
+
+                if v_result.get('v_active'):
+                    print(f"[TGAM] V-pattern! prob={v_result['v_prob']:.2f} conc={conc:.1f}")
+
+                payload_ws = {
+                    'type': 'eeg',
+                    'channels': [round(conc, 2)],
+                    'bands': bands_out,
+                    'artifacts': artifacts,
+                    'vpattern': v_result,
+                    'source': 'tgam'
+                }
+                await ws.send(json.dumps(payload_ws))
+                await asyncio.sleep(0.25)   # 4fps UI update
+
+        send_task = asyncio.create_task(send_loop())
+
+        loop = asyncio.get_event_loop()
+        try:
+            while True:
+                # Read serial in executor to avoid blocking
+                data = await loop.run_in_executor(None, lambda: ser.read(256))
+                i = 0
+                while i < len(data) - 3:
+                    if data[i] == 0xAA and data[i+1] == 0xAA:
+                        plen = data[i+2]
+                        if i + 3 + plen + 1 > len(data):
+                            break
+                        payload = data[i+3: i+3+plen]
+                        chk = data[i+3+plen]
+                        if (~sum(payload) & 0xFF) == chk:
+                            parse_payload(list(payload))
+                        i += 3 + plen + 1
+                    else:
+                        i += 1
+        finally:
+            send_task.cancel()
+            ser.close()
+
+    except Exception as e:
+        print(f"[TGAM] Error: {e}")
+        await ws.send(json.dumps({'type': 'error',
+            'message': f'TGAM error: {e}. Falling back to simulation.'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder,
+                         exp_holder=exp_holder)
+
 # ── Muse S Athena — muselsl / pylsl ───────────────────────────────────────────
 async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
     """
@@ -976,6 +1129,10 @@ def make_handler(source, dat_file, trial, speed,
             elif source == 'muse':
                 await stream_muse(ws, detector=detector, cal_holder=calibrator_holder,
                                   exp_holder=exp_holder)
+            elif source == 'tgam':
+                await stream_tgam(ws, serial_port=STATE.get('serial_port'),
+                                  detector=detector, cal_holder=calibrator_holder,
+                                  exp_holder=exp_holder)
             else:
                 await stream_sim(ws, detector=detector, cal_holder=calibrator_holder,
                                  exp_holder=exp_holder)
@@ -994,8 +1151,10 @@ def make_handler(source, dat_file, trial, speed,
 def main():
     parser = argparse.ArgumentParser(
         description='EEG WebSocket Server — Brain Concentration Visualization')
-    parser.add_argument('--source', choices=['sim','deap','mental','emotiv','muse'],
+    parser.add_argument('--source', choices=['sim','deap','mental','emotiv','muse','tgam'],
                         default='sim', help='Data source')
+    parser.add_argument('--serial-port', default=None,
+                        help='Serial port for TGAM (e.g. COM3 / /dev/ttyUSB0)')
     parser.add_argument('--file',  default=None, help='Data file path')
     parser.add_argument('--trial', type=int,   default=0,   help='DEAP trial index (0-39)')
     parser.add_argument('--speed', type=float, default=1.0, help='Playback speed multiplier')
@@ -1014,6 +1173,9 @@ def main():
     if not PANDAS_OK and args.source == 'mental':
         print("[ERROR] pandas required. pip install pandas")
         return
+
+    if args.serial_port:
+        STATE['serial_port'] = args.serial_port
 
     handler = make_handler(args.source, args.file, args.trial, args.speed,
                            notch_hz=args.notch, no_preprocess=args.no_preprocess,
@@ -1040,6 +1202,11 @@ def main():
     if args.source == 'muse':
         print(" NOTE: Requires Muse S paired via Bluetooth + muselsl running")
         print("       pip install muselsl pylsl  →  muselsl stream")
+    if args.source == 'tgam':
+        port = args.serial_port or '(auto)'
+        print(f" NOTE: TGAM serial port: {port}")
+        print("       pip install pyserial")
+        print("       Windows: --serial-port COM3 | Linux: --serial-port /dev/ttyUSB0")
     print(" Open mockup_3d.html in browser")
     print(" Press Ctrl+C to stop")
     print("=" * 60)

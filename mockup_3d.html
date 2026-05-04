@@ -150,6 +150,7 @@
         <select id="devSel" onchange="onDeviceChange()" style="margin-bottom:6px">
           <option value="emotiv">EMOTIV EPOC X (14ch)</option>
           <option value="muse">MUSE S ATHENA (4ch)</option>
+          <option value="tgam">TGAM / NEUROSKY (1ch)</option>
         </select>
         <select id="srcSel" onchange="onSourceChange()">
           <option value="sim">SIMULATION</option>
@@ -290,6 +291,20 @@ const DEVICE_PROFILES = {
     regions: [
       {name:'FRONTAL',  idxs:[1,2,3,4], color:'#6688ff'},
       {name:'TEMPORAL', idxs:[0,5],     color:'#ffaa44'}
+    ]
+  },
+  tgam: {
+    label: 'TGAM / NeuroSky', nCh: 1, fs: 512,
+    sources: [
+      {v:'sim',  l:'SIMULATION'},
+      {v:'tgam', l:'TGAM (LIVE)'}
+    ],
+    electrodes: [
+      {n:'Fp1', x:0.0, y:-0.76}
+    ],
+    activeIdx: [0],
+    regions: [
+      {name:'FRONTAL', idxs:[0], color:'#6688ff'}
     ]
   }
 };
@@ -448,15 +463,21 @@ function onDeviceChange() {
 
   // Toggle 3D visualization
   const isMuse = dev === 'muse';
-  // Brain: show for Emotiv, hide for Muse
-  if (typeof brain !== 'undefined') brain.visible = !isMuse;
+  const isTgam = dev === 'tgam';
+  const isEmotiv = dev === 'emotiv';
+  // Brain: Emotiv only
+  if (typeof brain !== 'undefined') brain.visible = isEmotiv;
   // Emotiv electrode meshes
-  if (typeof eMeshes !== 'undefined') eMeshes.forEach(m => m.visible = !isMuse);
-  if (typeof glowMeshes !== 'undefined') glowMeshes.forEach(m => m.visible = !isMuse);
+  if (typeof eMeshes !== 'undefined') eMeshes.forEach(m => m.visible = isEmotiv);
+  if (typeof glowMeshes !== 'undefined') glowMeshes.forEach(m => m.visible = isEmotiv);
   // Muse meshes
   if (typeof museEMeshes !== 'undefined') museEMeshes.forEach(m => m.visible = isMuse);
   if (typeof museGlows !== 'undefined') museGlows.forEach(m => m.visible = isMuse);
   if (typeof museBandMesh !== 'undefined') museBandMesh.visible = isMuse;
+  // TGAM meshes
+  if (typeof tgamEMesh !== 'undefined') tgamEMesh.visible = isTgam;
+  if (typeof tgamGlow !== 'undefined') tgamGlow.visible = isTgam;
+  if (typeof tgamArcMesh !== 'undefined') tgamArcMesh.visible = isTgam;
 
   CFG.electrodes = profile.electrodes;
 }
@@ -639,10 +660,42 @@ const museBandMesh = new THREE.Mesh(
 museBandMesh.visible = false;
 scene.add(museBandMesh);
 
-// Label markers for inactive Emotiv electrodes when in Muse mode
-const inactiveMarkerMat = new THREE.MeshBasicMaterial({
-  color: 0x333355, transparent: true, opacity: 0.25
+// ── TGAM / NEUROSKY (1ch Fp1 forehead) ───────────────────
+const TGAM_POS = toSphere(0.0, -0.76, 1.03);
+const tgamEMat = new THREE.MeshStandardMaterial({
+  color: 0x44ffcc, emissive: 0x22aa88, emissiveIntensity: 0.7,
+  roughness: 0.2, metalness: 0.6
 });
+const tgamEMesh = new THREE.Mesh(new THREE.SphereGeometry(0.07, 16, 16), tgamEMat);
+tgamEMesh.position.copy(TGAM_POS);
+tgamEMesh.visible = false;
+scene.add(tgamEMesh);
+
+const tgamGlowMat = new THREE.SpriteMaterial({
+  map: glowTex, transparent: true, opacity: 0.8,
+  color: 0x44ffcc, blending: THREE.AdditiveBlending
+});
+const tgamGlow = new THREE.Sprite(tgamGlowMat);
+tgamGlow.scale.set(0.5, 0.5, 1);
+tgamGlow.position.copy(TGAM_POS);
+tgamGlow.visible = false;
+scene.add(tgamGlow);
+
+// Slim forehead arc for TGAM headset
+const _tgamArcPts = [];
+for (let i = 0; i <= 40; i++) {
+  const nx = (i / 40 - 0.5) * 1.1;
+  _tgamArcPts.push(toSphere(nx, -0.72, 1.04));
+}
+const tgamArcMat = new THREE.MeshPhongMaterial({
+  color: 0x33ccaa, transparent: true, opacity: 0.6, shininess: 60
+});
+const tgamArcMesh = new THREE.Mesh(
+  new THREE.TubeGeometry(new THREE.CatmullRomCurve3(_tgamArcPts), 30, 0.018, 8, false),
+  tgamArcMat
+);
+tgamArcMesh.visible = false;
+scene.add(tgamArcMesh);
 
 // ── BRAIN REGIONS ─────────────────────────────────────────
 function rLine(x0, x1, ny, R=1.015, col=0x4488ff, op=0.4, n=60) {
@@ -837,8 +890,20 @@ function toggleControl(concAtEvent = 50) {
 
 // ── UPDATE 3D VISUALS ─────────────────────────────────────
 function update3D() {
-  const isMuse = CFG.activeDevice === 'muse';
-  if (isMuse) {
+  const isMuse  = CFG.activeDevice === 'muse';
+  const isTgam  = CFG.activeDevice === 'tgam';
+  if (isTgam) {
+    const t = CFG.vals[0] / 100;
+    const c = jet(t);
+    tgamEMat.color.setRGB(c.r, c.g, c.b);
+    tgamEMat.emissive.setRGB(c.r*0.6, c.g*0.6, c.b*0.6);
+    tgamEMat.emissiveIntensity = 0.5 + t * 1.5;
+    tgamGlowMat.color.setRGB(c.r, c.g, c.b);
+    tgamGlowMat.opacity = 0.4 + t * 0.8;
+    const s = 0.35 + t * 0.6;
+    tgamGlow.scale.set(s, s, 1);
+    tgamArcMat.color.setRGB(0.3 + c.r*0.5, 0.3 + c.g*0.5, 0.3 + c.b*0.5);
+  } else if (isMuse) {
     MUSE_ELECS.forEach((e, i) => {
       const t = CFG.vals[i] / 100;
       const c = e.ref ? {r:0.3,g:0.3,b:0.4} : jet(t);
@@ -914,9 +979,9 @@ function updateUI(avg) {
   });
 
   // Hemisphere balance — left/right split from active profile
-  const isMuse = CFG.activeDevice === 'muse';
-  const lIdx = isMuse ? [0,1]   : [0,2,3,6,8,10,12];   // TP9,AF7 | Emotiv left
-  const rIdx = isMuse ? [4,5]   : [1,4,5,7,9,11,13];   // AF8,TP10 | Emotiv right
+  const _dev = CFG.activeDevice;
+  const lIdx = _dev==='muse' ? [0,1] : _dev==='tgam' ? [0] : [0,2,3,6,8,10,12];
+  const rIdx = _dev==='muse' ? [4,5] : _dev==='tgam' ? [0] : [1,4,5,7,9,11,13];
   const lAvg = lIdx.reduce((s,i)=>s+CFG.vals[i],0)/lIdx.length;
   const rAvg = rIdx.reduce((s,i)=>s+CFG.vals[i],0)/rIdx.length;
   document.getElementById('lHemiBar').style.width = lAvg+'%';
