@@ -625,7 +625,7 @@ scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.01,24,24),new THREE.MeshBasi
 scene.add(new THREE.Mesh(new THREE.TorusGeometry(1.01,0.003,8,80),new THREE.MeshBasicMaterial({color:0x4466aa,transparent:true,opacity:0.4})));
 
 const noseMesh=new THREE.Mesh(new THREE.ConeGeometry(0.04,0.12,8),new THREE.MeshBasicMaterial({color:0xffcc44}));
-noseMesh.position.set(0,-0.18,1.02); noseMesh.rotation.x=Math.PI/2; scene.add(noseMesh);
+noseMesh.position.set(0,-0.18,-1.02); noseMesh.rotation.x=-Math.PI/2; scene.add(noseMesh);
 
 function makeLabel(text,color){
   const tmp=document.createElement('canvas').getContext('2d');
@@ -637,7 +637,7 @@ function makeLabel(text,color){
   const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:new THREE.CanvasTexture(c),transparent:true,opacity:0.72}));
   sp.scale.set(0.18*(w/h),0.18,1); return sp;
 }
-[['FRONT','#ffcc44',0,-0.05,1.35],['BACK','#6480cc',0,-0.05,-1.35],['L','#6480cc',-1.35,0,0],['R','#6480cc',1.35,0,0]].forEach(([t,col,x,y,z])=>{
+[['FRONT','#ffcc44',0,-0.05,-1.35],['BACK','#6480cc',0,-0.05,1.35],['L','#6480cc',-1.35,0,0],['R','#6480cc',1.35,0,0]].forEach(([t,col,x,y,z])=>{
   const sp=makeLabel(t,col); sp.position.set(x,y,z); scene.add(sp);
 });
 
@@ -693,7 +693,7 @@ rLabel('FRONTAL',0,-0.48); rLabel('PARIETAL',0,0.36); rLabel('OCCIPITAL',0,0.76)
 // ══════════════════════════════════════════════════════════
 //  ORBIT CONTROLS
 // ══════════════════════════════════════════════════════════
-let drag=false,lastMouse={x:0,y:0},rotX=0.3,rotY=0,zoom=3.5;
+let drag=false,lastMouse={x:0,y:0},rotX=0.3,rotY=Math.PI,zoom=3.5;
 canvas3d.addEventListener('mousedown',e=>{drag=true;lastMouse={x:e.clientX,y:e.clientY};});
 window.addEventListener('mouseup',()=>drag=false);
 window.addEventListener('mousemove',e=>{if(!drag)return;rotY-=(e.clientX-lastMouse.x)*.007;rotX+=(e.clientY-lastMouse.y)*.007;rotX=Math.max(-1.4,Math.min(1.4,rotX));lastMouse={x:e.clientX,y:e.clientY};});
@@ -702,7 +702,7 @@ let lastTouch=null;
 canvas3d.addEventListener('touchstart',e=>{lastTouch=e.touches[0];});
 canvas3d.addEventListener('touchmove',e=>{if(!lastTouch)return;rotY-=(e.touches[0].clientX-lastTouch.clientX)*.007;rotX+=(e.touches[0].clientY-lastTouch.clientY)*.007;lastTouch=e.touches[0];e.preventDefault();},{passive:false});
 canvas3d.addEventListener('touchend',()=>lastTouch=null);
-canvas3d.addEventListener('dblclick',()=>{rotX=0.3;rotY=0;zoom=3.5;});
+canvas3d.addEventListener('dblclick',()=>{rotX=0.3;rotY=Math.PI;zoom=3.5;});
 
 // ══════════════════════════════════════════════════════════
 //  TOOLTIP — device-aware raycaster
@@ -1130,7 +1130,7 @@ document.addEventListener('keydown',e=>{
   if(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT') return;
   if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal'].forEach(id=>document.getElementById(id).classList.remove('show'));}
   if(e.key==='f'||e.key==='F'){forceV();}
-  if(e.key==='r'||e.key==='R'){rotX=0.3;rotY=0;zoom=3.5;}
+  if(e.key==='r'||e.key==='R'){rotX=0.3;rotY=Math.PI;zoom=3.5;}
 });
 function _expDone(){EXP.active=false;_expSetRunning(false);clearInterval(EXP._timerInterval);document.body.style.borderTop='';}
 function _handleExperiment(d){
