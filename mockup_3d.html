@@ -32,6 +32,7 @@
     .ws-dot.connected  { background:#00cc66; box-shadow:0 0 5px #00cc66; }
     .ws-dot.error      { background:#cc4444; }
     .ws-dot.connecting { background:#ffcc44; animation:wsBlink .8s infinite; }
+    .ws-dot.offline    { background:#444; }
     @keyframes wsBlink { 0%,100%{opacity:1} 50%{opacity:.4} }
     #wsStatusText { font-size:10px; color:#5070aa; white-space:nowrap; }
 
@@ -163,6 +164,7 @@
         MEDITATION&nbsp;<span id="meditVal" style="color:#a0c0ff">—</span>
       </div>
       <div class="state-badge" id="stateBadge" style="background:rgba(100,140,255,0.18);color:#a0c0ff">IDLE</div>
+      <div id="ctrlBadge" style="text-align:center;font-size:9px;margin-top:4px;padding:3px;border-radius:3px;background:rgba(100,140,255,0.07);color:#3a5a8a;border:1px solid rgba(100,140,255,0.14);letter-spacing:1px">CTRL · INACTIVE</div>
       <div id="emgWarn">⚠ EMG ARTIFACT</div>
       <div id="tgamWarn">⚠ POOR SIGNAL</div>
       <div id="sigqRow" style="display:none;margin-top:6px">
@@ -273,7 +275,7 @@
 </div>
 
 <div id="tooltip"><div class="t-name"></div><div class="t-val"></div></div>
-<div class="hint">🖱 Drag to rotate · Scroll to zoom · Hover electrode for info</div>
+<div class="hint">Drag · Scroll zoom · Dbl-click reset · F force-V · R reset cam · Esc close</div>
 
 <!-- V-Alert -->
 <div id="vAlert">
@@ -300,7 +302,7 @@
 <!-- ADMIN PASSWORD MODAL -->
 <div class="modal" id="adminModal">
   <div class="modal-box" style="width:240px">
-    <h3>ADMIN ACCESS</h3>
+    <h3>ADMIN ACCESS <span class="modal-close" onclick="closeAdminModal()">✕</span></h3>
     <input type="password" id="pwInput" placeholder="Password" onkeydown="if(event.key==='Enter')checkPw()">
     <div id="pwErr" style="display:none;font-size:9px;color:#ff6666;margin-bottom:6px;text-align:center">Wrong password</div>
     <div class="modal-btns">
@@ -543,7 +545,14 @@ function onDeviceChange() {
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
 
   if (ws){ws.onclose=null;ws.close();ws=null;}
-  clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('error');
+  clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('offline');
+
+  CFG.manual=false; document.getElementById('manSlider').value=50; document.getElementById('mv').textContent='50%';
+  bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
+  vPhase=null; controlActive=false; pulseActive=false; pulseTimer=0;
+  clearTimeout(vAlertTimer); document.getElementById('vAlert').classList.remove('show');
+  const cb=document.getElementById('ctrlBadge');
+  cb.textContent='CTRL · INACTIVE'; cb.style.cssText='text-align:center;font-size:9px;margin-top:4px;padding:3px;border-radius:3px;background:rgba(100,140,255,0.07);color:#3a5a8a;border:1px solid rgba(100,140,255,0.14);letter-spacing:1px';
 
   const srcSel=document.getElementById('srcSel');
   srcSel.innerHTML='';
@@ -571,6 +580,7 @@ function onDeviceChange() {
   document.getElementById('regionPanelTitle').textContent =prof.regionTitle;
 
   if (!isEmotiv){brainMat.color.setHex(0x2244aa);brainMat.opacity=0.18;}
+  [noseMesh,...regionLines,...regionSceneLabels].forEach(o=>o.visible=isEmotiv);
 }
 
 function onSourceChange() {
@@ -578,7 +588,7 @@ function onSourceChange() {
   const src=document.getElementById('srcSel').value;
   if (src==='sim'){
     if(ws){ws.onclose=null;ws.close();ws=null;}
-    clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('error');
+    clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('offline');
   } else { wsConnect(); }
 }
 
@@ -671,12 +681,13 @@ const tgamArcMat=new THREE.MeshPhongMaterial({color:0x33ccaa,transparent:true,op
 const tgamArcMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(Array.from({length:41},(_,i)=>toSphere((i/40-.5)*1.1,-.72,1.04))),30,0.018,8,false),tgamArcMat);
 tgamArcMesh.visible=false; scene.add(tgamArcMesh);
 
-// Region boundary lines
-function rLine(x0,x1,ny,R,col,op){const pts=[];for(let i=0;i<=60;i++)pts.push(toSphere(x0+(x1-x0)*(i/60),ny,R));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op})));}
-function rVLine(nx,y0,y1,R,col,op){const pts=[];for(let i=0;i<=60;i++)pts.push(toSphere(nx,y0+(y1-y0)*(i/60),R));scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op})));}
+// Region boundary lines (Emotiv-only — collected for visibility toggle)
+const regionLines=[],regionSceneLabels=[];
+function rLine(x0,x1,ny,R,col,op){const pts=[];for(let i=0;i<=60;i++)pts.push(toSphere(x0+(x1-x0)*(i/60),ny,R));const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op}));scene.add(l);regionLines.push(l);}
+function rVLine(nx,y0,y1,R,col,op){const pts=[];for(let i=0;i<=60;i++)pts.push(toSphere(nx,y0+(y1-y0)*(i/60),R));const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op}));scene.add(l);regionLines.push(l);}
 rLine(-0.88,0.88,-0.10,1.015,0x44aaff,0.45); rLine(-0.88,0.88,0.20,1.015,0x44aaff,0.35); rLine(-0.70,0.70,0.58,1.015,0x44aaff,0.35);
 rVLine(-0.68,-0.28,0.42,1.015,0x44aaff,0.30); rVLine(0.68,-0.28,0.42,1.015,0x44aaff,0.30); rVLine(0,-0.90,0.90,1.015,0x334488,0.20);
-function rLabel(t,nx,ny){const sp=makeLabel(t,'#3a5a8a');sp.scale.multiplyScalar(1.15);sp.position.copy(toSphere(nx,ny,1.22));scene.add(sp);}
+function rLabel(t,nx,ny){const sp=makeLabel(t,'#3a5a8a');sp.scale.multiplyScalar(1.15);sp.position.copy(toSphere(nx,ny,1.22));scene.add(sp);regionSceneLabels.push(sp);}
 rLabel('FRONTAL',0,-0.48); rLabel('PARIETAL',0,0.36); rLabel('OCCIPITAL',0,0.76); rLabel('L.TEMP',-0.90,0.14); rLabel('R.TEMP',0.90,0.14);
 
 // ══════════════════════════════════════════════════════════
@@ -691,6 +702,7 @@ let lastTouch=null;
 canvas3d.addEventListener('touchstart',e=>{lastTouch=e.touches[0];});
 canvas3d.addEventListener('touchmove',e=>{if(!lastTouch)return;rotY-=(e.touches[0].clientX-lastTouch.clientX)*.007;rotX+=(e.touches[0].clientY-lastTouch.clientY)*.007;lastTouch=e.touches[0];e.preventDefault();},{passive:false});
 canvas3d.addEventListener('touchend',()=>lastTouch=null);
+canvas3d.addEventListener('dblclick',()=>{rotX=0.3;rotY=0;zoom=3.5;});
 
 // ══════════════════════════════════════════════════════════
 //  TOOLTIP — device-aware raycaster
@@ -736,7 +748,7 @@ function simStep(){
   if(CFG.dataSource!=='ws'){
     if(vPhase){
       vPhase.step++;
-      const t=vPhase.step/vPhase.total,conc=t<0.4?15+t*10:15+(t-.4)/.6*85;
+      const t=vPhase.step/vPhase.total,conc=t<0.4?75-(t/.4)*60:15+((t-.4)/.6)*85;
       for(let i=0;i<nch;i++) CFG.vals[i]=conc+(Math.random()-.5)*10;
       if(vPhase.step>=vPhase.total) vPhase=null;
     } else if(CFG.manual){
@@ -786,6 +798,12 @@ function toggleControl(concAtEvent=50){
     const rp=RPT.peaks.filter(p=>p.t>evtTime&&p.t<evtTime+10000);
     if(rp.length>0){const b=rp.reduce((a,x)=>x.conc>a.conc?x:a);entry.peakConc=Math.round(b.conc);entry.peakDelay=((b.t-evtTime)/1000).toFixed(1);}
   },10000);
+
+  const cb=document.getElementById('ctrlBadge');
+  cb.textContent=controlActive?'CTRL · ACTIVE':'CTRL · INACTIVE';
+  cb.style.cssText=controlActive
+    ?'text-align:center;font-size:9px;margin-top:4px;padding:3px;border-radius:3px;background:rgba(255,100,30,0.18);color:#ff9060;border:1px solid rgba(255,100,30,0.3);letter-spacing:1px'
+    :'text-align:center;font-size:9px;margin-top:4px;padding:3px;border-radius:3px;background:rgba(100,140,255,0.07);color:#3a5a8a;border:1px solid rgba(100,140,255,0.14);letter-spacing:1px';
 
   const el=document.getElementById('vAlert'),sub=document.getElementById('vAlertSub');
   el.style.borderColor=controlActive?'#ff8040':'#6480cc';
@@ -897,7 +915,7 @@ function drawGraph(){
   const cv=document.getElementById('graphCanvas'),ctx=cv.getContext('2d');
   cv.width=cv.offsetWidth*devicePixelRatio; cv.height=cv.offsetHeight*devicePixelRatio;
   ctx.scale(devicePixelRatio,devicePixelRatio);
-  const W=cv.offsetWidth,H=cv.offsetHeight,pL=30,pR=5,pT=4,pB=4;
+  const W=cv.offsetWidth,H=cv.offsetHeight,pL=30,pR=5,pT=4,pB=13;
   ctx.clearRect(0,0,W,H);
 
   ctx.font='8px Courier New'; ctx.textAlign='right';
@@ -927,6 +945,10 @@ function drawGraph(){
     i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
   });
   ctx.stroke();
+
+  ctx.font='7px Courier New'; ctx.fillStyle='rgba(100,140,255,0.38)';
+  ctx.textAlign='right'; ctx.fillText('now',W-pR,H-2);
+  if(hist.length>1){const sec=((hist.length-1)*0.6).toFixed(0);ctx.textAlign='left';ctx.fillText('-'+sec+'s',pL,H-2);}
 
   RPT.events.forEach(ev=>{
     const age=(Date.now()-ev.t)/1000,maxAge=(hist.length-1)*.6;
@@ -985,7 +1007,12 @@ function updateCfg(){
 }
 function updateManual(){CFG.manVal=+document.getElementById('manSlider').value;CFG.manual=true;document.getElementById('mv').textContent=CFG.manVal+'%';}
 function forceV(){
-  if(CFG.dataSource!=='ws'){vPhase={step:0,total:60};CFG.manual=false;document.getElementById('manSlider').value=50;document.getElementById('mv').textContent='50%';}
+  if(CFG.dataSource!=='ws'){
+    vPhase={step:0,total:60};CFG.manual=false;
+    document.getElementById('manSlider').value=50;document.getElementById('mv').textContent='50%';
+    const btns=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('FORCE'));
+    if(btns){btns.style.background='rgba(255,200,60,0.38)';setTimeout(()=>btns.style.background='',500);}
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1089,7 +1116,13 @@ function addManualMarker(){
   const m=document.getElementById('expBarMark');
   m.style.background='rgba(255,200,50,0.4)'; setTimeout(()=>m.style.background='',300);
 }
-document.addEventListener('keydown',e=>{if(e.code==='Space'&&EXP.active&&document.activeElement.tagName!=='INPUT'){e.preventDefault();addManualMarker();}});
+document.addEventListener('keydown',e=>{
+  if(e.code==='Space'&&EXP.active&&document.activeElement.tagName!=='INPUT'){e.preventDefault();addManualMarker();return;}
+  if(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT') return;
+  if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal'].forEach(id=>document.getElementById(id).classList.remove('show'));}
+  if(e.key==='f'||e.key==='F'){forceV();}
+  if(e.key==='r'||e.key==='R'){rotX=0.3;rotY=0;zoom=3.5;}
+});
 function _expDone(){EXP.active=false;_expSetRunning(false);clearInterval(EXP._timerInterval);document.body.style.borderTop='';}
 function _handleExperiment(d){
   if(d.state==='running'||d.phase){
