@@ -106,6 +106,7 @@
     }
     #vAlert.show { display:block; animation:vSlideIn .28s ease; }
     @keyframes vSlideIn { from{opacity:0;transform:translateX(28px)} to{opacity:1;transform:translateX(0)} }
+    @keyframes vsBlink  { 0%,100%{opacity:1} 50%{opacity:.55} }
 
     /* ── Tooltip ── */
     #tooltip { position:fixed; display:none; background:rgba(5,8,16,0.95); border:1px solid rgba(100,140,255,0.46); border-radius:6px; padding:5px 10px; font-size:11px; pointer-events:none; z-index:50; }
@@ -481,7 +482,11 @@ function wsConnect() {
   if (ws && ws.readyState <= 1) return;
   wsSetStatus('connecting');
   try { ws = new WebSocket('ws://localhost:8765'); } catch(e) { wsSetStatus('error'); return; }
-  ws.onopen  = () => wsSetStatus('connected');
+  ws.onopen  = () => {
+    wsSetStatus('connected');
+    const src=document.getElementById('srcSel')?.value;
+    if(src&&src!=='sim') ws.send(JSON.stringify({type:'source_change',source:src}));
+  };
   ws.onclose = () => { wsSetStatus('error'); CFG.dataSource='sim'; clearTimeout(wsReTimer); wsReTimer=setTimeout(wsConnect,3000); };
   ws.onerror = () => wsSetStatus('error');
   ws.onmessage = e => {
@@ -547,7 +552,7 @@ function onDeviceChange() {
   if (ws){ws.onclose=null;ws.close();ws=null;}
   clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('offline');
 
-  CFG.manual=false; document.getElementById('manSlider').value=50; document.getElementById('mv').textContent='50%';
+  CFG.manual=false; CFG.manVal=50; document.getElementById('manSlider').value=50; document.getElementById('mv').textContent='50%';
   bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
   vPhase=null; controlActive=false; pulseActive=false; pulseTimer=0;
   clearTimeout(vAlertTimer); document.getElementById('vAlert').classList.remove('show');
@@ -580,6 +585,7 @@ function onDeviceChange() {
   document.getElementById('regionPanelTitle').textContent =prof.regionTitle;
 
   if (!isEmotiv){brainMat.color.setHex(0x2244aa);brainMat.opacity=0.18;}
+  wireMesh.visible=!isTgam; torusMesh.visible=!isTgam;
   [noseMesh,...regionLines,...regionSceneLabels].forEach(o=>o.visible=isEmotiv);
 }
 
@@ -589,7 +595,13 @@ function onSourceChange() {
   if (src==='sim'){
     if(ws){ws.onclose=null;ws.close();ws=null;}
     clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('offline');
-  } else { wsConnect(); }
+    bands.engagement_index=null; bands.faa=null; bands.concentration=null;
+    bands.meditation=null; bands.poor_signal=0; bands.emg_warn=false;
+  } else {
+    wsConnect();
+    if(ws&&ws.readyState===WebSocket.OPEN)
+      ws.send(JSON.stringify({type:'source_change',source:src}));
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -618,11 +630,13 @@ camera.position.set(0,0.5,3.5);
 scene.add(new THREE.AmbientLight(0x334488,1.2));
 const ptLight=new THREE.PointLight(0x6688ff,1.5,10);
 ptLight.position.set(2,2,2); scene.add(ptLight);
+const ptLightFront=new THREE.PointLight(0x4466cc,0.9,10);
+ptLightFront.position.set(0,1,-3); scene.add(ptLightFront);
 
 const brainMat=new THREE.MeshPhongMaterial({color:0x2244aa,transparent:true,opacity:0.18,side:THREE.DoubleSide,shininess:120,specular:0x8899ff});
 const brain=new THREE.Mesh(new THREE.SphereGeometry(1,64,64),brainMat); scene.add(brain);
-scene.add(new THREE.Mesh(new THREE.SphereGeometry(1.01,24,24),new THREE.MeshBasicMaterial({color:0x334477,wireframe:true,transparent:true,opacity:0.07})));
-scene.add(new THREE.Mesh(new THREE.TorusGeometry(1.01,0.003,8,80),new THREE.MeshBasicMaterial({color:0x4466aa,transparent:true,opacity:0.4})));
+const wireMesh=new THREE.Mesh(new THREE.SphereGeometry(1.01,24,24),new THREE.MeshBasicMaterial({color:0x334477,wireframe:true,transparent:true,opacity:0.07})); scene.add(wireMesh);
+const torusMesh=new THREE.Mesh(new THREE.TorusGeometry(1.01,0.003,8,80),new THREE.MeshBasicMaterial({color:0x4466aa,transparent:true,opacity:0.4})); scene.add(torusMesh);
 
 const noseMesh=new THREE.Mesh(new THREE.ConeGeometry(0.04,0.12,8),new THREE.MeshBasicMaterial({color:0xffcc44}));
 noseMesh.position.set(0,-0.18,-1.02); noseMesh.rotation.x=-Math.PI/2; scene.add(noseMesh);
@@ -685,8 +699,11 @@ tgamArcMesh.visible=false; scene.add(tgamArcMesh);
 const regionLines=[],regionSceneLabels=[];
 function rLine(x0,x1,ny,R,col,op){const pts=[];for(let i=0;i<=60;i++)pts.push(toSphere(x0+(x1-x0)*(i/60),ny,R));const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op}));scene.add(l);regionLines.push(l);}
 function rVLine(nx,y0,y1,R,col,op){const pts=[];for(let i=0;i<=60;i++)pts.push(toSphere(nx,y0+(y1-y0)*(i/60),R));const l=new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts),new THREE.LineBasicMaterial({color:col,transparent:true,opacity:op}));scene.add(l);regionLines.push(l);}
-rLine(-0.88,0.88,-0.10,1.015,0x44aaff,0.45); rLine(-0.88,0.88,0.20,1.015,0x44aaff,0.35); rLine(-0.70,0.70,0.58,1.015,0x44aaff,0.35);
-rVLine(-0.68,-0.28,0.42,1.015,0x44aaff,0.30); rVLine(0.68,-0.28,0.42,1.015,0x44aaff,0.30); rVLine(0,-0.90,0.90,1.015,0x334488,0.20);
+rLine(-0.88,0.88,-0.10,1.015,0x6688ff,0.50); // frontal-central boundary
+rLine(-0.88,0.88,0.20,1.015,0x44ddaa,0.40);  // central-parietal boundary
+rLine(-0.70,0.70,0.58,1.015,0xff6677,0.40);  // parietal-occipital boundary
+rVLine(-0.68,-0.28,0.42,1.015,0xffaa44,0.35); rVLine(0.68,-0.28,0.42,1.015,0xffaa44,0.35); // temporal boundaries
+rVLine(0,-0.90,0.90,1.015,0x334488,0.18);     // interhemispheric
 function rLabel(t,nx,ny){const sp=makeLabel(t,'#3a5a8a');sp.scale.multiplyScalar(1.15);sp.position.copy(toSphere(nx,ny,1.22));scene.add(sp);regionSceneLabels.push(sp);}
 rLabel('FRONTAL',0,-0.48); rLabel('PARIETAL',0,0.36); rLabel('OCCIPITAL',0,0.76); rLabel('L.TEMP',-0.90,0.14); rLabel('R.TEMP',0.90,0.14);
 
@@ -764,11 +781,15 @@ function simStep(){
     bands.gamma=Math.max(0,Math.min(100,20+focus*30+(Math.random()-.5)*8));
     const prof2=getProf();
     if(prof2.showFAA){
-      const lF=prof2.activeDevice==='muse'?CFG.vals[1]:( CFG.vals[0]+CFG.vals[2]+CFG.vals[3])/3;
-      const rF=prof2.activeDevice==='muse'?CFG.vals[4]:( CFG.vals[1]+CFG.vals[4]+CFG.vals[5])/3;
+      const isMuse=CFG.activeDevice==='muse';
+      const lF=isMuse?CFG.vals[1]:(CFG.vals[0]+CFG.vals[2]+CFG.vals[3])/3;
+      const rF=isMuse?CFG.vals[4]:(CFG.vals[1]+CFG.vals[4]+CFG.vals[5])/3;
       bands.faa=Math.max(-0.5,Math.min(0.5,((rF-lF)/100+(Math.random()-.5)*0.04)));
     }
-    bands.engagement_index=Math.max(0,Math.min(1,focus+( Math.random()-.5)*0.06));
+    if(CFG.activeDevice==='tgam'){
+      bands.poor_signal=Math.max(0,Math.min(50,bands.poor_signal+(Math.random()-.48)*3));
+    }
+    bands.engagement_index=Math.max(0,Math.min(1,focus+(Math.random()-.5)*0.06));
   }
   const avg=Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
   CFG.history.push(avg);
@@ -886,9 +907,11 @@ function updateUI(avg){
   document.getElementById('emgWarn').style.display=bands.emg_warn?'':'none';
 
   const badge=document.getElementById('stateBadge');
+  const vArmed=CFG.vLow&&CFG.vCooldown===0&&CFG.dataSource!=='ws';
   if(avg<CFG.thLow){badge.textContent='RELAXED';badge.style.cssText='background:rgba(0,100,200,.24);color:#60a0ff';}
   else if(avg>CFG.thHigh){badge.textContent='FOCUSED';badge.style.cssText='background:rgba(255,80,0,.24);color:#ff9060';}
-  else{badge.textContent='TRANSITION';badge.style.cssText='background:rgba(0,180,100,.2);color:#60dd90';}
+  else if(vArmed){badge.textContent='▲ RECOVERING';badge.style.cssText='background:rgba(255,160,30,.26);color:#ffaa40;animation:vsBlink .9s infinite';}
+  else{badge.textContent='TRANSITION';badge.style.cssText='background:rgba(0,180,100,.2);color:#60dd90;animation:none';}
 
   const bk=['delta','theta','alpha','beta','gamma'],tot=bk.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
   bk.forEach(k=>{
@@ -938,6 +961,11 @@ function drawGraph(){
 
   const hist=CFG.history;
   if(hist.length<2) return;
+
+  if(CFG.vLow&&CFG.vCooldown===0){
+    const y1=pT+(1-CFG.thHigh/100)*(H-pT-pB),y2=pT+(1-CFG.thLow/100)*(H-pT-pB);
+    ctx.fillStyle='rgba(255,160,40,0.06)'; ctx.fillRect(pL,y1,W-pL-pR,y2-y1);
+  }
 
   [[CFG.thLow,'rgba(80,120,255,0.5)'],[CFG.thHigh,'rgba(255,110,50,0.5)']].forEach(([th,col])=>{
     const y=pT+(1-th/100)*(H-pT-pB);
