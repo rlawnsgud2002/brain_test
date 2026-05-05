@@ -135,14 +135,14 @@
   <span id="topDevTag" class="dev-tag emotiv">EMOTIV</span>
   <span id="topDevName">Emotiv EPOC X</span>
   <span id="topSep">·</span>
-  <span id="topSrcLabel">SIM</span>
+  <span id="topSrcLabel">SIMULATION</span>
   <div id="topSigQ">
     <span>SIG</span>
     <div class="sigq-track"><div id="sigqFill"></div></div>
     <span id="sigqPct">100%</span>
   </div>
   <div id="topWsRow">
-    <span class="ws-dot" id="wsDot"></span>
+    <span class="ws-dot offline" id="wsDot"></span>
     <span id="wsStatusText">OFFLINE</span>
   </div>
 </div>
@@ -762,23 +762,32 @@ function simStep(){
     bands.theta=Math.max(0,Math.min(100,40+(Math.random()-.5)*15));
     bands.delta=Math.max(0,Math.min(100,30+(Math.random()-.5)*10));
     bands.gamma=Math.max(0,Math.min(100,20+focus*30+(Math.random()-.5)*8));
+    const prof2=getProf();
+    if(prof2.showFAA){
+      const lF=prof2.activeDevice==='muse'?CFG.vals[1]:( CFG.vals[0]+CFG.vals[2]+CFG.vals[3])/3;
+      const rF=prof2.activeDevice==='muse'?CFG.vals[4]:( CFG.vals[1]+CFG.vals[4]+CFG.vals[5])/3;
+      bands.faa=Math.max(-0.5,Math.min(0.5,((rF-lF)/100+(Math.random()-.5)*0.04)));
+    }
+    bands.engagement_index=Math.max(0,Math.min(1,focus+( Math.random()-.5)*0.06));
   }
   const avg=Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
   CFG.history.push(avg);
   if(CFG.history.length>120) CFG.history.shift();
   rptTick(avg);
 
-  if(CFG.vCooldown>0){
-    CFG.vCooldown--;
-  } else {
-    if(!CFG.vLow&&avg<CFG.thLow){CFG.vLow=true;CFG.vLowTime=Date.now();}
-    if(CFG.vLow&&(Date.now()-CFG.vLowTime)/1000>CFG.dt) CFG.vLow=false;
-    if(CFG.vLow&&avg>CFG.thHigh){
-      const elapsed=(Date.now()-CFG.vLowTime)/1000;
-      const recent=CFG.history.slice(-8);
-      const slope=recent.length>3?(recent[recent.length-1]-recent[recent.length-4])/3:0;
-      if(elapsed<CFG.dt&&slope>0.3){toggleControl(avg);CFG.vCooldown=Math.round(CFG.dt*10);}
-      CFG.vLow=false;
+  if(CFG.dataSource!=='ws'){
+    if(CFG.vCooldown>0){
+      CFG.vCooldown--;
+    } else {
+      if(!CFG.vLow&&avg<CFG.thLow){CFG.vLow=true;CFG.vLowTime=Date.now();}
+      if(CFG.vLow&&(Date.now()-CFG.vLowTime)/1000>CFG.dt) CFG.vLow=false;
+      if(CFG.vLow&&avg>CFG.thHigh){
+        const elapsed=(Date.now()-CFG.vLowTime)/1000;
+        const recent=CFG.history.slice(-8);
+        const slope=recent.length>3?(recent[recent.length-1]-recent[recent.length-4])/3:0;
+        if(elapsed<CFG.dt&&slope>0.3){toggleControl(avg);CFG.vCooldown=Math.round(CFG.dt*10);}
+        CFG.vLow=false;
+      }
     }
   }
   return avg;
@@ -853,7 +862,7 @@ function updateUI(avg){
   document.getElementById('concNum').textContent=Math.round(avg)+'%';
   document.getElementById('concNum').style.color=jetStr(avg/100);
 
-  const ei=bands.engagement_index??(0.5+avg/200);
+  const ei=bands.engagement_index??(avg/100);
   document.getElementById('baRatio').textContent=(typeof ei==='number'?ei:0).toFixed(3);
 
   if(prof.showFAA){
