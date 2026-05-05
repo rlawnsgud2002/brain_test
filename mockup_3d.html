@@ -409,12 +409,12 @@ const DEVICE_PROFILES = {
       {v:'muse',  l:'MUSE S (LIVE)'}
     ],
     electrodes:[
-      {n:'TP9', x:-0.85,y: 0.05},
-      {n:'AF7', x:-0.60,y:-0.50},
-      {n:'FP1', x:-0.20,y:-0.72,ref:true},
-      {n:'FP2', x: 0.20,y:-0.72,ref:true},
-      {n:'AF8', x: 0.60,y:-0.50},
-      {n:'TP10',x: 0.85,y: 0.05}
+      {n:'TP9', x:-0.62,y: 0.28},
+      {n:'AF7', x:-0.36,y:-0.78},
+      {n:'FP1', x:-0.28,y:-0.90,ref:true},
+      {n:'FP2', x: 0.28,y:-0.90,ref:true},
+      {n:'AF8', x: 0.36,y:-0.78},
+      {n:'TP10',x: 0.62,y: 0.28}
     ],
     activeIdx:[0,1,4,5],
     regions:[
@@ -430,7 +430,7 @@ const DEVICE_PROFILES = {
       {v:'sim', l:'SIMULATION'},
       {v:'tgam',l:'TGAM (LIVE)'}
     ],
-    electrodes:[{n:'Fp1',x:0.0,y:-0.76}],
+    electrodes:[{n:'Fp1',x:-0.18,y:-0.88}],
     activeIdx:[0],
     regions:[{name:'FRONTAL',idxs:[0],color:'#6688ff'}],
     regionTitle:'FRONTAL ACTIVITY',
@@ -666,7 +666,7 @@ const museEMats=MUSE_ELECS.map(e=>new THREE.MeshStandardMaterial({color:e.ref?0x
 const museEMeshes=MUSE_ELECS.map((e,i)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(e.ref?0.03:0.055,12,12),museEMats[i]);m.position.copy(toSphere(e.x,e.y,1.03));m.visible=false;scene.add(m);return m;});
 const museGlows=MUSE_ELECS.map(e=>{const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,transparent:true,opacity:e.ref?0:0.5,blending:THREE.AdditiveBlending}));sp.scale.set(0.35,0.35,1);sp.position.copy(toSphere(e.x,e.y,1.03));sp.visible=false;scene.add(sp);return sp;});
 const museBandMat=new THREE.MeshPhongMaterial({color:0x888888,transparent:true,opacity:0.65,shininess:40});
-const museBandMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(MUSE_ELECS.map(e=>toSphere(e.x,e.y,1.04))),50,0.028,10,false),museBandMat);
+const museBandMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(MUSE_ELECS.map(e=>toSphere(e.x,e.y,1.04))),80,0.022,10,false),museBandMat);
 museBandMesh.visible=false; scene.add(museBandMesh);
 
 // TGAM
@@ -678,7 +678,7 @@ const tgamGlowMat=new THREE.SpriteMaterial({map:glowTex,transparent:true,opacity
 const tgamGlow=new THREE.Sprite(tgamGlowMat);
 tgamGlow.scale.set(0.5,0.5,1); tgamGlow.position.copy(TGAM_POS); tgamGlow.visible=false; scene.add(tgamGlow);
 const tgamArcMat=new THREE.MeshPhongMaterial({color:0x33ccaa,transparent:true,opacity:0.6,shininess:60});
-const tgamArcMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(Array.from({length:41},(_,i)=>toSphere((i/40-.5)*1.1,-.72,1.04))),30,0.018,8,false),tgamArcMat);
+const tgamArcMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(Array.from({length:41},(_,i)=>toSphere(-0.18+(i/40-.5)*0.7,-0.86,1.04))),30,0.018,8,false),tgamArcMat);
 tgamArcMesh.visible=false; scene.add(tgamArcMesh);
 
 // Region boundary lines (Emotiv-only — collected for visibility toggle)
