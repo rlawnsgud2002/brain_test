@@ -452,7 +452,8 @@ const CFG = {
   vals: new Float32Array(14).fill(50),
   history: [],
   vLow:false, vLowTime:0, vCooldown:0,
-  dataSource:'sim', _lastVActive:false
+  dataSource:'sim', _lastVActive:false,
+  _dt:0.1, _lastStepTime:0
 };
 const getProf = () => DEVICE_PROFILES[CFG.activeDevice];
 const getRegs = () => getProf().regions;
@@ -460,11 +461,12 @@ const getRegs = () => getProf().regions;
 // ══════════════════════════════════════════════════════════
 //  SESSION TRACKER
 // ══════════════════════════════════════════════════════════
-const RPT = { sessionStart:Date.now(), events:[], peaks:[], _lastAvg:50, _rising:false };
+const RPT = { sessionStart:Date.now(), events:[], peaks:[], _lastAvg:50, _rising:false, _sum:0, _count:0 };
 function rptTick(avg) {
   if (RPT._rising && avg < RPT._lastAvg - 1) RPT.peaks.push({t:Date.now(),conc:RPT._lastAvg});
   RPT._rising = avg > RPT._lastAvg;
   RPT._lastAvg = avg;
+  RPT._sum += avg; RPT._count++;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -556,7 +558,8 @@ function onDeviceChange() {
 
   if(EXP.active)_expDone();
   if(CAL.active){CAL.active=false;document.getElementById('calModal').classList.remove('show');}
-  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vCooldown=0;
+  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vCooldown=0; CFG._lastStepTime=0;
+  RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
 
@@ -806,6 +809,7 @@ function simStep(){
     }
     if(CFG.activeDevice==='tgam'){
       bands.poor_signal=Math.max(0,Math.min(50,bands.poor_signal+(Math.random()-.48)*3));
+      bands.meditation=Math.max(0,Math.min(100,(bands.meditation??50)+(Math.random()-.48)*4));
     }
     bands.engagement_index=Math.max(0,Math.min(1,focus+(Math.random()-.5)*0.06));
   }
@@ -1023,12 +1027,12 @@ function drawGraph(){
 
   ctx.font='7px Courier New'; ctx.fillStyle='rgba(100,140,255,0.38)';
   ctx.textAlign='right'; ctx.fillText('now',W-pR,H-2);
-  if(hist.length>1){const sec=((hist.length-1)*0.6).toFixed(0);ctx.textAlign='left';ctx.fillText('-'+sec+'s',pL,H-2);}
+  if(hist.length>1){const sec=((hist.length-1)*CFG._dt).toFixed(0);ctx.textAlign='left';ctx.fillText('-'+sec+'s',pL,H-2);}
 
   RPT.events.forEach(ev=>{
-    const age=(Date.now()-ev.t)/1000,maxAge=(hist.length-1)*.6;
+    const age=(Date.now()-ev.t)/1000,maxAge=(hist.length-1)*CFG._dt;
     if(age>maxAge) return;
-    const xi=hist.length-1-age/.6;
+    const xi=hist.length-1-age/CFG._dt;
     if(xi<0||xi>=hist.length) return;
     const x=pL+(xi/(hist.length-1))*(W-pL-pR);
     ctx.strokeStyle='rgba(255,160,60,0.7)'; ctx.lineWidth=1; ctx.setLineDash([2,2]);
@@ -1042,7 +1046,12 @@ function drawGraph(){
 let frame=0;
 function animate(){
   requestAnimationFrame(animate); frame++;
-  if(frame%6===0){const avg=simStep();update3D();updateUI(avg);drawGraph();}
+  if(frame%6===0){
+    const now=performance.now();
+    if(CFG._lastStepTime>0) CFG._dt=Math.max(0.05,Math.min(1,(now-CFG._lastStepTime)/1000));
+    CFG._lastStepTime=now;
+    const avg=simStep();update3D();updateUI(avg);drawGraph();
+  }
 
   if(pulseActive){
     pulseTimer+=0.06;
@@ -1071,7 +1080,11 @@ function showToast(msg,col='#ff9060'){
   t.textContent=msg; t.style.color=col; t.style.opacity='1'; t.style.transform='translateX(-50%) translateY(0)';
   clearTimeout(t._t); t._t=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(8px)';},2400);
 }
-function showAdmin(){document.getElementById('adminModal').classList.add('show');document.getElementById('pwErr').style.display='none';}
+function showAdmin(){
+  document.getElementById('adminModal').classList.add('show');
+  document.getElementById('pwErr').style.display='none';
+  setTimeout(()=>document.getElementById('pwInput').focus(),60);
+}
 function closeAdminModal(){document.getElementById('adminModal').classList.remove('show');document.getElementById('pwInput').value='';}
 function checkPw(){
   if(document.getElementById('pwInput').value===CFG.pw){closeAdminModal();document.getElementById('settingsModal').classList.add('show');}
@@ -1101,8 +1114,8 @@ function forceV(){
 function fmtTime(ms){const s=Math.round((ms-RPT.sessionStart)/1000);return`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
 function showReport(){
   const hist=CFG.history,dur=Math.round((Date.now()-RPT.sessionStart)/1000);
-  const avgC=hist.length?(hist.reduce((a,b)=>a+b)/hist.length).toFixed(1):'-';
-  const maxC=hist.length?Math.max(...hist).toFixed(1):'-';
+  const avgC=RPT._count?(RPT._sum/RPT._count).toFixed(1):'-';
+  const maxC=RPT.peaks.length?Math.max(...RPT.peaks.map(p=>p.conc)).toFixed(1):(hist.length?Math.max(...hist).toFixed(1):'-');
   const minC=hist.length?Math.min(...hist).toFixed(1):'-';
   const delays=RPT.events.filter(e=>e.peakDelay!=null).map(e=>+e.peakDelay);
   const avgDelay=delays.length?(delays.reduce((a,b)=>a+b)/delays.length).toFixed(1)+'s':'N/A';
@@ -1114,7 +1127,8 @@ function showReport(){
     <div class="report-stat"><span>Max Concentration</span><span>${maxC}%</span></div>
     <div class="report-stat"><span>Min Concentration</span><span>${minC}%</span></div>
     <div class="report-stat"><span>V-Pattern Events</span><span>${RPT.events.length}</span></div>
-    <div class="report-stat"><span>Avg Peak Delay</span><span>${avgDelay}</span></div>`;
+    <div class="report-stat"><span>Avg Peak Delay</span><span>${avgDelay}</span></div>
+    <div class="report-stat"><span>Total Samples</span><span>${RPT._count}</span></div>`;
   document.getElementById('reportEvents').innerHTML=RPT.events.length===0
     ?'<div style="font-size:10px;color:#6480cc;padding:5px 0">No events yet</div>'
     :`<table class="report-table"><thead><tr><th>Time</th><th>Type</th><th>Conc</th><th>Peak</th><th>Delay</th></tr></thead><tbody>${RPT.events.map(e=>`<tr><td>${fmtTime(e.t)}</td><td style="color:${e.type==='ACTIVATED'?'#ff9060':'#6480cc'}">${e.type}</td><td>${e.concAtEvent.toFixed(1)}%</td><td>${e.peakConc!=null?e.peakConc+'%':'—'}</td><td>${e.peakDelay!=null?e.peakDelay+'s':'—'}</td></tr>`).join('')}</tbody></table>`;
@@ -1128,7 +1142,8 @@ function exportCSV(){
   const rows=['Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)'];
   RPT.events.forEach(e=>{const t=((e.t-RPT.sessionStart)/1000).toFixed(1);rows.push(`${t},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`);});
   const histRows=['SessionTime(s),Concentration(%)'];
-  CFG.history.forEach((v,i)=>histRows.push(`${(i*.6).toFixed(1)},${v.toFixed(1)}`));
+  const histOffset=Math.max(0,(Date.now()-RPT.sessionStart)/1000-(CFG.history.length-1)*CFG._dt);
+  CFG.history.forEach((v,i)=>histRows.push(`${(histOffset+i*CFG._dt).toFixed(2)},${v.toFixed(1)}`));
   const a=document.createElement('a');
   const csvUrl=URL.createObjectURL(new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')],{type:'text/csv'}));
   a.href=csvUrl; a.download=`eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
@@ -1203,7 +1218,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal'].forEach(id=>document.getElementById(id).classList.remove('show'));}
   if(e.key==='f'||e.key==='F'){forceV();}
   if(e.key==='r'||e.key==='R'){rotX=0.3;rotY=Math.PI;zoom=3.5;}
-  if(e.key==='s'||e.key==='S'){showAdmin();}
+  if(e.key==='s'||e.key==='S'){if(!document.getElementById('settingsModal').classList.contains('show'))showAdmin();}
   if(e.key==='m'||e.key==='M'){
     if(CFG.dataSource==='ws'){showToast('Manual mode unavailable in live WS mode','#ff8040');return;}
     CFG.manual=!CFG.manual;
