@@ -27,7 +27,7 @@
     .sigq-track  { width:44px; height:3px; background:rgba(100,140,255,0.15); border-radius:2px; overflow:hidden; }
     #sigqFill    { height:100%; width:100%; background:#00cc66; border-radius:2px; transition:width .5s,background .5s; }
     #sigqPct     { font-size:9px; min-width:26px; }
-    #topWsRow    { margin-left:auto; display:flex; align-items:center; gap:4px; }
+    #topWsRow    { display:flex; align-items:center; gap:4px; }
     .ws-dot      { display:inline-block; width:6px; height:6px; border-radius:50%; background:#333; flex-shrink:0; }
     .ws-dot.connected  { background:#00cc66; box-shadow:0 0 5px #00cc66; }
     .ws-dot.error      { background:#cc4444; }
@@ -142,7 +142,8 @@
     <div class="sigq-track"><div id="sigqFill"></div></div>
     <span id="sigqPct">100%</span>
   </div>
-  <div id="topWsRow">
+  <span id="topTimer" style="font-size:9px;color:#3a5070;letter-spacing:1px;margin-left:auto">00:00</span>
+  <div id="topWsRow" style="margin-left:8px">
     <span class="ws-dot offline" id="wsDot"></span>
     <span id="wsStatusText">OFFLINE</span>
   </div>
@@ -157,6 +158,7 @@
     <div class="panel-box">
       <div class="panel-title">CONCENTRATION</div>
       <div class="big-num" id="concNum" style="color:#a0c0ff">50%</div>
+      <div id="concTrend" style="text-align:center;font-size:10px;margin-top:-2px;height:14px;color:#4060aa;letter-spacing:1px">─ STABLE</div>
       <div class="sub-label">ENG INDEX&nbsp;<span id="baRatio">0.500</span></div>
       <div id="faaRow" class="sub-label" style="font-size:9px;color:#4a6090">
         FAA&nbsp;<span id="faaVal">0.000</span>&nbsp;<span id="faaLabel" style="color:#6480cc"></span>
@@ -882,6 +884,13 @@ function updateUI(avg){
   const prof=getProf();
   document.getElementById('concNum').textContent=Math.round(avg)+'%';
   document.getElementById('concNum').style.color=jetStr(avg/100);
+  const trendDiff=avg-RPT._lastAvg;
+  const trendEl=document.getElementById('concTrend');
+  if(trendDiff>1.2){trendEl.textContent='↑ RISING';trendEl.style.color='#ff9060';}
+  else if(trendDiff<-1.2){trendEl.textContent='↓ FALLING';trendEl.style.color='#60a0ff';}
+  else{trendEl.textContent='─ STABLE';trendEl.style.color='#3a5070';}
+  const el2=Math.round((Date.now()-RPT.sessionStart)/1000);
+  document.getElementById('topTimer').textContent=`${String(Math.floor(el2/60)).padStart(2,'0')}:${String(el2%60).padStart(2,'0')}`;
 
   const ei=bands.engagement_index??(avg/100);
   document.getElementById('baRatio').textContent=(typeof ei==='number'?ei:0).toFixed(3);
@@ -902,14 +911,17 @@ function updateUI(avg){
     document.getElementById('sigqBar').style.cssText=`background:${qc};width:${quality}%`;
     document.getElementById('sigqFill').style.cssText=`background:${qc};width:${quality}%`;
     document.getElementById('sigqPct').textContent=quality+'%';
-    document.getElementById('tgamWarn').style.display=ps>100?'':'none';
+    document.getElementById('tgamWarn').style.display=ps>100?'block':'none';
   }
-  document.getElementById('emgWarn').style.display=bands.emg_warn?'':'none';
+  document.getElementById('emgWarn').style.display=bands.emg_warn?'block':'none';
 
   const badge=document.getElementById('stateBadge');
   const vArmed=CFG.vLow&&CFG.vCooldown===0&&CFG.dataSource!=='ws';
-  if(avg<CFG.thLow){badge.textContent='RELAXED';badge.style.cssText='background:rgba(0,100,200,.24);color:#60a0ff';}
-  else if(avg>CFG.thHigh){badge.textContent='FOCUSED';badge.style.cssText='background:rgba(255,80,0,.24);color:#ff9060';}
+  if(CFG.vCooldown>0&&CFG.dataSource!=='ws'){
+    const sec=Math.ceil(CFG.vCooldown/10);
+    badge.textContent=`⏱ COOLDOWN ${sec}s`;badge.style.cssText='background:rgba(80,60,180,.22);color:#9080ee;animation:none';
+  } else if(avg<CFG.thLow){badge.textContent='RELAXED';badge.style.cssText='background:rgba(0,100,200,.24);color:#60a0ff;animation:none';}
+  else if(avg>CFG.thHigh){badge.textContent='FOCUSED';badge.style.cssText='background:rgba(255,80,0,.24);color:#ff9060;animation:none';}
   else if(vArmed){badge.textContent='▲ RECOVERING';badge.style.cssText='background:rgba(255,160,30,.26);color:#ffaa40;animation:vsBlink .9s infinite';}
   else{badge.textContent='TRANSITION';badge.style.cssText='background:rgba(0,180,100,.2);color:#60dd90;animation:none';}
 
@@ -983,6 +995,11 @@ function drawGraph(){
   });
   ctx.stroke();
 
+  const lastV=hist[hist.length-1];
+  const dotX=W-pR, dotY=pT+(1-lastV/100)*(H-pT-pB);
+  ctx.fillStyle=jetStr(lastV/100); ctx.beginPath(); ctx.arc(dotX,dotY,3.5,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=1; ctx.beginPath(); ctx.arc(dotX,dotY,3.5,0,Math.PI*2); ctx.stroke();
+
   ctx.font='7px Courier New'; ctx.fillStyle='rgba(100,140,255,0.38)';
   ctx.textAlign='right'; ctx.fillText('now',W-pR,H-2);
   if(hist.length>1){const sec=((hist.length-1)*0.6).toFixed(0);ctx.textAlign='left';ctx.fillText('-'+sec+'s',pL,H-2);}
@@ -1027,6 +1044,12 @@ animate();
 // ══════════════════════════════════════════════════════════
 //  ADMIN / SETTINGS
 // ══════════════════════════════════════════════════════════
+function showToast(msg,col='#ff9060'){
+  let t=document.getElementById('_toast');
+  if(!t){t=document.createElement('div');t.id='_toast';t.style.cssText='position:fixed;bottom:30px;left:50%;transform:translateX(-50%) translateY(8px);background:rgba(8,12,24,0.97);border:1px solid rgba(100,140,255,0.3);border-radius:6px;padding:7px 18px;font-size:11px;pointer-events:none;z-index:600;letter-spacing:.5px;opacity:0;transition:opacity .25s,transform .25s;font-family:Courier New,monospace';document.body.appendChild(t);}
+  t.textContent=msg; t.style.color=col; t.style.opacity='1'; t.style.transform='translateX(-50%) translateY(0)';
+  clearTimeout(t._t); t._t=setTimeout(()=>{t.style.opacity='0';t.style.transform='translateX(-50%) translateY(8px)';},2400);
+}
 function showAdmin(){document.getElementById('adminModal').classList.add('show');document.getElementById('pwErr').style.display='none';}
 function closeAdminModal(){document.getElementById('adminModal').classList.remove('show');document.getElementById('pwInput').value='';}
 function checkPw(){
@@ -1044,12 +1067,11 @@ function updateCfg(){
 }
 function updateManual(){CFG.manVal=+document.getElementById('manSlider').value;CFG.manual=true;document.getElementById('mv').textContent=CFG.manVal+'%';}
 function forceV(){
-  if(CFG.dataSource!=='ws'){
-    vPhase={step:0,total:60};CFG.manual=false;
-    document.getElementById('manSlider').value=50;document.getElementById('mv').textContent='50%';
-    const btns=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('FORCE'));
-    if(btns){btns.style.background='rgba(255,200,60,0.38)';setTimeout(()=>btns.style.background='',500);}
-  }
+  const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('FORCE'));
+  if(CFG.dataSource==='ws'){showToast('Live WS mode — V-pattern forced by server only','#6080ff');if(btn){btn.style.background='rgba(60,80,255,0.22)';setTimeout(()=>btn.style.background='',600);}return;}
+  vPhase={step:0,total:60};CFG.manual=false;CFG.vLow=false;CFG.vCooldown=0;
+  document.getElementById('manSlider').value=50;document.getElementById('mv').textContent='50%';
+  if(btn){btn.style.background='rgba(255,200,60,0.38)';setTimeout(()=>btn.style.background='',500);}
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1087,8 +1109,9 @@ function exportCSV(){
   const histRows=['SessionTime(s),Concentration(%)'];
   CFG.history.forEach((v,i)=>histRows.push(`${(i*.6).toFixed(1)},${v.toFixed(1)}`));
   const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')],{type:'text/csv'}));
-  a.download=`eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`; a.click();
+  const csvUrl=URL.createObjectURL(new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')],{type:'text/csv'}));
+  a.href=csvUrl; a.download=`eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
+  a.click(); setTimeout(()=>URL.revokeObjectURL(csvUrl),60000);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1096,7 +1119,7 @@ function exportCSV(){
 // ══════════════════════════════════════════════════════════
 const CAL={active:false,relax:15,focus:15};
 function startCalibration(){
-  if(!ws||ws.readyState!==WebSocket.OPEN){alert('WebSocket not connected.');return;}
+  if(!ws||ws.readyState!==WebSocket.OPEN){showToast('WebSocket not connected — select a live source first.');return;}
   CAL.active=true;
   document.getElementById('calResult').style.display='none';
   document.getElementById('calCloseBtn').style.display='none';
@@ -1138,7 +1161,7 @@ function _expSetRunning(running){
   document.getElementById('expBar').style.display    =running?'block':'none';
 }
 function startExperiment(){
-  if(!ws||ws.readyState!==WebSocket.OPEN){alert('WebSocket not connected.');return;}
+  if(!ws||ws.readyState!==WebSocket.OPEN){showToast('WebSocket not connected — connect to a device first.');return;}
   EXP.active=true; EXP.markerCount=0; _expSetRunning(true);
   ws.send(JSON.stringify({type:'exp_start',protocol:document.getElementById('expProtocolSel').value}));
 }
