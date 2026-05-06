@@ -71,6 +71,38 @@
     .hint { position:fixed; bottom:10px; left:50%; transform:translateX(-50%); font-size:9px; color:rgba(100,140,255,0.35); pointer-events:none; letter-spacing:1px; }
     hr.sep { border:none; border-top:1px solid rgba(100,140,255,0.13); margin:7px 0; }
 
+    /* ── Gauge ── */
+    #gaugeWrap { position:relative; height:118px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; margin-bottom:2px; }
+    #gaugeCanvas { position:absolute; top:0; left:50%; transform:translateX(-50%); }
+    #gaugeLabel { font-size:9px; color:#3a5070; letter-spacing:2px; margin-top:2px; }
+
+    /* ── Topo map ── */
+    #topoCanvas { display:block; width:100%; border-radius:4px; }
+
+    /* ── Signal quality bars ── */
+    .cq-row { display:flex; align-items:center; gap:5px; margin-bottom:3px; }
+    .cq-name { font-size:9px; color:#5070aa; width:28px; flex-shrink:0; }
+    .cq-bar-bg { flex:1; height:4px; background:rgba(100,140,255,0.1); border-radius:2px; overflow:hidden; }
+    .cq-bar-fill { height:100%; border-radius:2px; transition:width .4s, background .4s; }
+    .cq-pct { font-size:9px; min-width:28px; text-align:right; }
+
+    /* ── Improved electrode list ── */
+    .e-row { display:flex; align-items:center; gap:5px; margin-bottom:2px; }
+    .e-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+    .e-name { font-size:10px; color:#6480cc; flex:1; }
+    .e-val { font-size:10px; font-weight:bold; min-width:36px; text-align:right; }
+    .e-mini { flex:1; height:2px; background:rgba(100,140,255,0.1); border-radius:1px; overflow:hidden; }
+    .e-mini-fill { height:100%; border-radius:1px; transition:width .3s; }
+
+    /* ── Cognitive state grid ── */
+    .state-grid { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:4px; }
+    .state-cell { background:rgba(100,140,255,0.06); border:1px solid rgba(100,140,255,0.15); border-radius:5px; padding:5px 6px; text-align:center; }
+    .state-cell .sc-label { font-size:8px; color:#4a6090; letter-spacing:1.5px; display:block; margin-bottom:2px; }
+    .state-cell .sc-val { font-size:14px; font-weight:bold; }
+
+    /* ── Panel section separator ── */
+    .panel-section { font-size:8px; color:#3a5070; letter-spacing:2px; text-transform:uppercase; margin:6px 0 4px; }
+
     /* ── Modals ── */
     .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.72); justify-content:center; align-items:center; z-index:400; }
     .modal.show { display:flex; }
@@ -156,27 +188,39 @@
   <div class="left-panel">
 
     <div class="panel-box">
-      <div class="panel-title">CONCENTRATION</div>
-      <div class="big-num" id="concNum" style="color:#a0c0ff">50%</div>
-      <div id="concTrend" style="text-align:center;font-size:10px;margin-top:-2px;height:14px;color:#4060aa;letter-spacing:1px">─ STABLE</div>
-      <div class="sub-label">ENG INDEX&nbsp;<span id="baRatio">0.500</span></div>
-      <div id="faaRow" class="sub-label" style="font-size:9px;color:#4a6090">
-        FAA&nbsp;<span id="faaVal">0.000</span>&nbsp;<span id="faaLabel" style="color:#6480cc"></span>
+      <div class="panel-title">CONCENTRATION INDEX</div>
+      <div id="gaugeWrap">
+        <canvas id="gaugeCanvas" width="180" height="118"></canvas>
       </div>
-      <div id="meditRow" class="sub-label" style="display:none;font-size:9px;color:#4a6090">
-        MEDITATION&nbsp;<span id="meditVal" style="color:#a0c0ff">—</span>
-      </div>
-      <div class="state-badge" id="stateBadge" style="background:rgba(100,140,255,0.18);color:#a0c0ff">IDLE</div>
+      <div id="concTrend" style="text-align:center;font-size:10px;height:14px;color:#4060aa;letter-spacing:1px">─ STABLE</div>
+      <div class="state-badge" id="stateBadge" style="background:rgba(100,140,255,0.18);color:#a0c0ff;margin-top:5px">IDLE</div>
       <div id="ctrlBadge" style="text-align:center;font-size:9px;margin-top:4px;padding:3px;border-radius:3px;background:rgba(100,140,255,0.07);color:#3a5a8a;border:1px solid rgba(100,140,255,0.14);letter-spacing:1px">CTRL · INACTIVE</div>
+      <hr class="sep">
+      <div class="state-grid">
+        <div class="state-cell">
+          <span class="sc-label">ENG IDX</span>
+          <span class="sc-val" id="baRatio" style="color:#7090ff">0.500</span>
+        </div>
+        <div class="state-cell" id="faaCell">
+          <span class="sc-label">FAA</span>
+          <span class="sc-val" id="faaVal" style="color:#40cc88">0.00</span>
+        </div>
+        <div class="state-cell" id="meditCell" style="display:none">
+          <span class="sc-label">MEDITAT</span>
+          <span class="sc-val" id="meditVal" style="color:#a0c0ff">—</span>
+        </div>
+        <div class="state-cell" id="sigqCell" style="display:none">
+          <span class="sc-label">SIG QUAL</span>
+          <span class="sc-val" id="sigqVal" style="color:#00cc66">100%</span>
+        </div>
+      </div>
+      <div id="faaRow" style="display:none"><span id="faaLabel"></span></div>
+      <div id="meditRow" style="display:none"></div>
+      <div id="sigqRow" style="display:none">
+        <div class="bar-bg" style="margin-top:3px"><div class="bar-fill" id="sigqBar" style="background:#00cc66;width:100%"></div></div>
+      </div>
       <div id="emgWarn">⚠ EMG ARTIFACT</div>
       <div id="tgamWarn">⚠ POOR SIGNAL</div>
-      <div id="sigqRow" style="display:none;margin-top:6px">
-        <div class="metric-row" style="margin-bottom:2px">
-          <span class="metric-label">SIGNAL QUALITY</span>
-          <span class="metric-val" id="sigqVal" style="color:#00cc66">100%</span>
-        </div>
-        <div class="bar-bg"><div class="bar-fill" id="sigqBar" style="background:#00cc66;width:100%"></div></div>
-      </div>
     </div>
 
     <div class="panel-box">
@@ -248,8 +292,13 @@
     </div>
 
     <div class="panel-box">
+      <div class="panel-title">SCALP TOPOGRAPHY</div>
+      <canvas id="topoCanvas" height="120"></canvas>
+    </div>
+
+    <div class="panel-box">
       <div class="panel-title">ELECTRODE ACTIVITY</div>
-      <div id="electrodeList" style="font-size:10px;line-height:1.9;max-height:150px;overflow-y:auto"></div>
+      <div id="electrodeList" style="max-height:150px;overflow-y:auto"></div>
     </div>
 
     <div class="panel-box">
@@ -592,13 +641,16 @@ function onDeviceChange() {
   document.getElementById('topDevName').textContent=prof.label;
 
   document.getElementById('hemiPanel').style.display      =prof.showHemi ?'':'none';
-  document.getElementById('faaRow').style.display         =prof.showFAA  ?'':'none';
-  document.getElementById('meditRow').style.display       =prof.showMedit?'':'none';
-  document.getElementById('sigqRow').style.display        =prof.showSigQ ?'':'none';
+  document.getElementById('faaRow').style.display         ='none';
+  document.getElementById('meditRow').style.display       ='none';
+  document.getElementById('sigqRow').style.display        ='none';
+  document.getElementById('faaCell').style.display        =prof.showFAA  ?'':'none';
+  document.getElementById('meditCell').style.display      =prof.showMedit?'':'none';
+  document.getElementById('sigqCell').style.display       =prof.showSigQ ?'':'none';
   document.getElementById('topSigQ').style.display        =prof.showSigQ ?'flex':'none';
   document.getElementById('regionPanelTitle').textContent =prof.regionTitle;
 
-  if (!isEmotiv){brainMat.color.setHex(0x2244aa);brainMat.opacity=0.18;}
+  if (!isEmotiv){brainMat.color.setHex(0x2244aa);brainMat.opacity=0.20;}
   wireMesh.visible=!isTgam; torusMesh.visible=!isTgam;
   [noseMesh,...regionLines,...regionSceneLabels].forEach(o=>o.visible=isEmotiv);
 }
@@ -647,7 +699,7 @@ ptLight.position.set(2,2,2); scene.add(ptLight);
 const ptLightFront=new THREE.PointLight(0x4466cc,0.9,10);
 ptLightFront.position.set(0,1,-3); scene.add(ptLightFront);
 
-const brainMat=new THREE.MeshPhongMaterial({color:0x2244aa,transparent:true,opacity:0.18,side:THREE.DoubleSide,shininess:120,specular:0x8899ff});
+const brainMat=new THREE.MeshPhongMaterial({color:0x2244aa,transparent:true,opacity:0.20,side:THREE.FrontSide,shininess:120,specular:0x8899ff,depthWrite:true});
 const brain=new THREE.Mesh(new THREE.SphereGeometry(1,64,64),brainMat); scene.add(brain);
 const wireMesh=new THREE.Mesh(new THREE.SphereGeometry(1.01,24,24),new THREE.MeshBasicMaterial({color:0x334477,wireframe:true,transparent:true,opacity:0.07})); scene.add(wireMesh);
 const torusMesh=new THREE.Mesh(new THREE.TorusGeometry(1.01,0.003,8,80),new THREE.MeshBasicMaterial({color:0x4466aa,transparent:true,opacity:0.4})); scene.add(torusMesh);
@@ -694,7 +746,14 @@ const museEMats=MUSE_ELECS.map(e=>new THREE.MeshStandardMaterial({color:e.ref?0x
 const museEMeshes=MUSE_ELECS.map((e,i)=>{const m=new THREE.Mesh(new THREE.SphereGeometry(e.ref?0.03:0.055,12,12),museEMats[i]);m.position.copy(toSphere(e.x,e.y,1.03));m.visible=false;scene.add(m);return m;});
 const museGlows=MUSE_ELECS.map(e=>{const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,transparent:true,opacity:e.ref?0:0.5,blending:THREE.AdditiveBlending}));sp.scale.set(0.35,0.35,1);sp.position.copy(toSphere(e.x,e.y,1.03));sp.visible=false;scene.add(sp);return sp;});
 const museBandMat=new THREE.MeshPhongMaterial({color:0x888888,transparent:true,opacity:0.65,shininess:40});
-const museBandMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(MUSE_ELECS.map(e=>toSphere(e.x,e.y,1.04))),80,0.022,10,false),museBandMat);
+const museBandPts=[
+  {nx:-0.62,ny:0.28},{nx:-0.80,ny:0.08},{nx:-0.80,ny:-0.15},
+  {nx:-0.68,ny:-0.38},{nx:-0.52,ny:-0.58},{nx:-0.36,ny:-0.78},
+  {nx:-0.28,ny:-0.90},{nx:0.00,ny:-0.94},{nx:0.28,ny:-0.90},
+  {nx:0.36,ny:-0.78},{nx:0.52,ny:-0.58},{nx:0.68,ny:-0.38},
+  {nx:0.80,ny:-0.15},{nx:0.80,ny:0.08},{nx:0.62,ny:0.28}
+].map(e=>toSphere(e.nx,e.ny,1.04));
+const museBandMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(museBandPts),120,0.024,10,false),museBandMat);
 museBandMesh.visible=false; scene.add(museBandMesh);
 
 // TGAM
@@ -724,23 +783,25 @@ rLabel('FRONTAL',0,-0.48); rLabel('PARIETAL',0,0.36); rLabel('OCCIPITAL',0,0.76)
 // ══════════════════════════════════════════════════════════
 //  ORBIT CONTROLS
 // ══════════════════════════════════════════════════════════
-let drag=false,lastMouse={x:0,y:0},rotX=0.3,rotY=Math.PI,zoom=3.5;
+let drag=false,lastMouse={x:0,y:0};
+let rotX=0.3,rotY=Math.PI,zoom=3.5;
+let tRotX=0.3,tRotY=Math.PI,tZoom=3.5;
 canvas3d.addEventListener('mousedown',e=>{drag=true;lastMouse={x:e.clientX,y:e.clientY};});
 window.addEventListener('mouseup',()=>drag=false);
-window.addEventListener('mousemove',e=>{if(!drag)return;rotY-=(e.clientX-lastMouse.x)*.007;rotX+=(e.clientY-lastMouse.y)*.007;rotX=Math.max(-1.4,Math.min(1.4,rotX));lastMouse={x:e.clientX,y:e.clientY};});
-canvas3d.addEventListener('wheel',e=>{zoom=Math.max(1.8,Math.min(6,zoom+e.deltaY*.005));});
+window.addEventListener('mousemove',e=>{if(!drag)return;tRotY-=(e.clientX-lastMouse.x)*.007;tRotX+=(e.clientY-lastMouse.y)*.007;tRotX=Math.max(-1.4,Math.min(1.4,tRotX));lastMouse={x:e.clientX,y:e.clientY};});
+canvas3d.addEventListener('wheel',e=>{tZoom=Math.max(1.8,Math.min(6,tZoom+e.deltaY*.005));});
 let lastTouch=null,lastPinchDist=null;
 canvas3d.addEventListener('touchstart',e=>{
   if(e.touches.length===1){lastTouch=e.touches[0];lastPinchDist=null;}
   else if(e.touches.length===2){lastTouch=null;lastPinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);}
 });
 canvas3d.addEventListener('touchmove',e=>{
-  if(e.touches.length===1&&lastTouch){rotY-=(e.touches[0].clientX-lastTouch.clientX)*.007;rotX+=(e.touches[0].clientY-lastTouch.clientY)*.007;rotX=Math.max(-1.4,Math.min(1.4,rotX));lastTouch=e.touches[0];}
-  else if(e.touches.length===2&&lastPinchDist!=null){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);zoom=Math.max(1.8,Math.min(6,zoom-(d-lastPinchDist)*.01));lastPinchDist=d;}
+  if(e.touches.length===1&&lastTouch){tRotY-=(e.touches[0].clientX-lastTouch.clientX)*.007;tRotX+=(e.touches[0].clientY-lastTouch.clientY)*.007;tRotX=Math.max(-1.4,Math.min(1.4,tRotX));lastTouch=e.touches[0];}
+  else if(e.touches.length===2&&lastPinchDist!=null){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);tZoom=Math.max(1.8,Math.min(6,tZoom-(d-lastPinchDist)*.01));lastPinchDist=d;}
   e.preventDefault();
 },{passive:false});
 canvas3d.addEventListener('touchend',e=>{if(e.touches.length===0){lastTouch=null;lastPinchDist=null;}});
-canvas3d.addEventListener('dblclick',()=>{rotX=0.3;rotY=Math.PI;zoom=3.5;});
+canvas3d.addEventListener('dblclick',()=>{tRotX=0.3;tRotY=Math.PI;tZoom=3.5;});
 
 // ══════════════════════════════════════════════════════════
 //  TOOLTIP — device-aware raycaster
@@ -902,8 +963,6 @@ function update3D(){
 // ══════════════════════════════════════════════════════════
 function updateUI(avg){
   const prof=getProf();
-  document.getElementById('concNum').textContent=Math.round(avg)+'%';
-  document.getElementById('concNum').style.color=jetStr(avg/100);
   const hist=CFG.history;
   const trendDiff=hist.length>=6?hist[hist.length-1]-hist[hist.length-6]:0;
   const trendEl=document.getElementById('concTrend');
@@ -919,22 +978,34 @@ function updateUI(avg){
   if(prof.showFAA){
     const faa=bands.faa??0;
     document.getElementById('faaVal').textContent=faa.toFixed(3);
+    document.getElementById('faaVal').style.color=faa>0.05?'#ff9060':faa<-0.05?'#60a0ff':'#40cc88';
     document.getElementById('faaLabel').textContent=faa>0.05?'↑ APPROACH':faa<-0.05?'↓ WITHDRAW':'─ NEUTRAL';
   }
   if(prof.showMedit){
     const m=bands.meditation;
     document.getElementById('meditVal').textContent=(m!=null)?Math.round(m):'—';
+    if(m!=null) document.getElementById('meditVal').style.color=jetStr(m/100);
   }
   if(prof.showSigQ){
     const ps=bands.poor_signal??0,quality=Math.max(0,Math.round((1-ps/200)*100));
     const qc=quality>70?'#00cc66':quality>40?'#ffcc00':'#ff4444';
-    document.getElementById('sigqVal').textContent=quality+'%';
-    document.getElementById('sigqBar').style.cssText=`background:${qc};width:${quality}%`;
-    document.getElementById('sigqFill').style.cssText=`background:${qc};width:${quality}%`;
-    document.getElementById('sigqPct').textContent=quality+'%';
+    const svEl=document.getElementById('sigqVal');
+    if(svEl){svEl.textContent=quality+'%';svEl.style.color=qc;}
+    const sigqBar=document.getElementById('sigqBar');
+    if(sigqBar) sigqBar.style.cssText=`background:${qc};width:${quality}%`;
+    const sigqFill=document.getElementById('sigqFill');
+    if(sigqFill) sigqFill.style.cssText=`background:${qc};width:${quality}%`;
+    const sigqPct=document.getElementById('sigqPct');
+    if(sigqPct) sigqPct.textContent=quality+'%';
     document.getElementById('tgamWarn').style.display=ps>100?'block':'none';
   }
   document.getElementById('emgWarn').style.display=bands.emg_warn?'block':'none';
+
+  // Concentration gauge
+  drawGauge(document.getElementById('gaugeCanvas'), avg);
+
+  // 2D topographic map
+  drawTopo(document.getElementById('topoCanvas'));
 
   const badge=document.getElementById('stateBadge');
   const vArmed=CFG.vLow&&CFG.vCooldown===0&&CFG.dataSource!=='ws';
@@ -969,8 +1040,12 @@ function updateUI(avg){
 
   document.getElementById('electrodeList').innerHTML=CFG.electrodes.map((e,i)=>{
     const active=!e.ref,v=CFG.vals[i],vc=active?jetStr(v/100):'#334455';
-    const lbl=e.ref?`${e.n}&nbsp;<span style="color:#334;font-size:8px">REF</span>`:e.n;
-    return `<div style="display:flex;justify-content:space-between"><span style="color:${active?'#6480cc':'#334455'}">${lbl}</span><span style="color:${vc}">${active?v.toFixed(1):'—'}</span></div>`;
+    const dotCol=active?jetStr(v/100):'rgba(60,70,100,0.5)';
+    const simQ=active?Math.min(100,Math.max(40,85+(Math.sin(Date.now()/3000+i*1.7)*8))):0;
+    const qCol=simQ>70?'#00cc66':simQ>50?'#ffcc00':'#ff6644';
+    const nameStr=e.ref?`${e.n} <span style="font-size:7px;color:#334466">REF</span>`:e.n;
+    const barW=active?v.toFixed(0):'0';
+    return `<div class="e-row"><div class="e-dot" style="background:${dotCol};box-shadow:0 0 4px ${dotCol}"></div><span class="e-name">${nameStr}</span><div class="e-mini"><div class="e-mini-fill" style="width:${barW}%;background:${vc}"></div></div><span class="e-val" style="color:${vc}">${active?v.toFixed(1):'—'}</span></div>`;
   }).join('');
 }
 
@@ -1011,6 +1086,14 @@ function drawGraph(){
   });
   ctx.setLineDash([]);
 
+  // Gradient fill under the curve
+  const fillGrad=ctx.createLinearGradient(0,pT,0,H-pB);
+  fillGrad.addColorStop(0,'rgba(64,160,255,0.18)'); fillGrad.addColorStop(1,'rgba(64,96,200,0.02)');
+  ctx.beginPath();
+  hist.forEach((v,i)=>{const x=pL+(i/(hist.length-1))*(W-pL-pR),y=pT+(1-v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.lineTo(W-pR,H-pB); ctx.lineTo(pL,H-pB); ctx.closePath();
+  ctx.fillStyle=fillGrad; ctx.fill();
+
   const grad=ctx.createLinearGradient(pL,0,W-pR,0);
   grad.addColorStop(0,'#4060cc'); grad.addColorStop(.5,'#40cc80'); grad.addColorStop(1,'#ff8040');
   ctx.strokeStyle=grad; ctx.lineWidth=2; ctx.beginPath();
@@ -1041,6 +1124,146 @@ function drawGraph(){
 }
 
 // ══════════════════════════════════════════════════════════
+//  GAUGE + TOPO DRAW
+// ══════════════════════════════════════════════════════════
+function drawGauge(cv, value) {
+  const dpr=window.devicePixelRatio||1;
+  const W=180, H=118;
+  cv.width=W*dpr; cv.height=H*dpr;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');
+  ctx.scale(dpr,dpr);
+  const cx=W/2, cy=H-14, r=72, lw=11;
+  const startA=Math.PI*1.0, sweepA=Math.PI*1.0, endA=startA+sweepA;
+
+  // Track background
+  ctx.beginPath(); ctx.arc(cx,cy,r,startA,endA);
+  ctx.strokeStyle='rgba(100,140,255,0.10)'; ctx.lineWidth=lw+2; ctx.lineCap='round'; ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,r,startA,endA);
+  ctx.strokeStyle='rgba(30,40,80,0.7)'; ctx.lineWidth=lw; ctx.stroke();
+
+  // Tick marks at 0,25,50,75,100
+  for(let p=0;p<=100;p+=25){
+    const a=startA+(p/100)*sweepA;
+    const ir=r-lw/2-2, or=r+lw/2+2;
+    ctx.beginPath();
+    ctx.moveTo(cx+ir*Math.cos(a),cy+ir*Math.sin(a));
+    ctx.lineTo(cx+or*Math.cos(a),cy+or*Math.sin(a));
+    ctx.strokeStyle='rgba(60,80,140,0.6)'; ctx.lineWidth=1; ctx.stroke();
+  }
+
+  // Value arc with jet gradient
+  const t=Math.max(0,Math.min(1,value/100));
+  if(t>0.003){
+    const valEnd=startA+sweepA*t;
+    const g=ctx.createLinearGradient(cx-r,cy,cx+r,cy);
+    g.addColorStop(0,'#4060ee'); g.addColorStop(0.45,'#40cc80'); g.addColorStop(1,'#ff6030');
+    ctx.beginPath(); ctx.arc(cx,cy,r,startA,valEnd);
+    ctx.strokeStyle=g; ctx.lineWidth=lw; ctx.lineCap='round'; ctx.stroke();
+
+    // Needle cap glow
+    const glowX=cx+r*Math.cos(valEnd), glowY=cy+r*Math.sin(valEnd);
+    const gr=ctx.createRadialGradient(glowX,glowY,0,glowX,glowY,10);
+    const jc=jet(t);
+    gr.addColorStop(0,`rgba(${Math.round(jc.r*255)},${Math.round(jc.g*255)},${Math.round(jc.b*255)},0.6)`);
+    gr.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(glowX,glowY,10,0,Math.PI*2); ctx.fill();
+  }
+
+  // Center value
+  ctx.fillStyle=jetStr(t);
+  ctx.font=`bold 30px Courier New`; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(Math.round(value),cx,cy-18);
+
+  // Unit label
+  ctx.fillStyle='rgba(100,140,255,0.45)'; ctx.font='9px Courier New';
+  ctx.fillText('CONCENTRATION %',cx,cy-3);
+
+  // Scale labels
+  ctx.fillStyle='rgba(80,110,180,0.55)'; ctx.font='8px Courier New';
+  ctx.textAlign='center';
+  [[0,'0',startA],[50,'50',startA+sweepA*0.5],[100,'100',endA]].forEach(([,lbl,a])=>{
+    const lx=cx+(r+16)*Math.cos(a), ly=cy+(r+16)*Math.sin(a);
+    ctx.fillText(lbl,lx,ly);
+  });
+}
+
+function drawTopo(cv) {
+  if(!cv) return;
+  const dpr=window.devicePixelRatio||1;
+  const W=cv.parentElement?.offsetWidth||180, H=120;
+  cv.width=W*dpr; cv.height=H*dpr;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  const ctx=cv.getContext('2d');
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,W,H);
+  const cx=W/2, cy=H/2+2, r=Math.min(W/2,H/2)-10;
+
+  // Head circle
+  ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+  ctx.strokeStyle='rgba(100,140,255,0.2)'; ctx.lineWidth=1.5; ctx.stroke();
+  ctx.fillStyle='rgba(10,16,36,0.3)'; ctx.fill();
+
+  // Nose triangle
+  ctx.beginPath();
+  ctx.moveTo(cx-6,cy-r+2); ctx.lineTo(cx,cy-r-10); ctx.lineTo(cx+6,cy-r+2);
+  ctx.strokeStyle='rgba(255,200,50,0.55)'; ctx.lineWidth=1.2; ctx.stroke();
+
+  // Ear marks
+  [[-1],[1]].forEach(([s])=>{
+    ctx.beginPath(); ctx.arc(cx+s*r, cy, 4, 0, Math.PI*2);
+    ctx.strokeStyle='rgba(100,140,255,0.25)'; ctx.lineWidth=1; ctx.stroke();
+  });
+
+  // Midlines (faint)
+  ctx.setLineDash([2,3]);
+  ctx.strokeStyle='rgba(60,80,140,0.2)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(cx,cy-r); ctx.lineTo(cx,cy+r); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(cx-r,cy); ctx.lineTo(cx+r,cy); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const elecs=CFG.electrodes;
+  // Draw connections first (faint lines between nearby electrodes)
+  elecs.forEach((a,i)=>{
+    if(a.ref) return;
+    elecs.forEach((b,j)=>{
+      if(j<=i||b.ref) return;
+      const dist=Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);
+      if(dist>0.5) return;
+      const ax=cx+a.x*r, ay=cy-a.y*r, bx=cx+b.x*r, by=cy-b.y*r;
+      ctx.beginPath(); ctx.moveTo(ax,ay); ctx.lineTo(bx,by);
+      ctx.strokeStyle='rgba(80,100,180,0.12)'; ctx.lineWidth=0.8; ctx.stroke();
+    });
+  });
+
+  // Electrode dots
+  elecs.forEach((e,i)=>{
+    const px=cx+e.x*r, py=cy-e.y*r;
+    const v=CFG.vals[i]/100;
+    if(e.ref){
+      ctx.beginPath(); ctx.arc(px,py,3,0,Math.PI*2);
+      ctx.fillStyle='rgba(70,80,120,0.5)'; ctx.fill();
+      return;
+    }
+    const jc=jet(v);
+    const rc=Math.round(jc.r*255),gc=Math.round(jc.g*255),bc=Math.round(jc.b*255);
+    // Glow halo
+    const grd=ctx.createRadialGradient(px,py,0,px,py,10);
+    grd.addColorStop(0,`rgba(${rc},${gc},${bc},0.40)`);
+    grd.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle=grd; ctx.beginPath(); ctx.arc(px,py,10,0,Math.PI*2); ctx.fill();
+    // Core dot
+    ctx.beginPath(); ctx.arc(px,py,4.5,0,Math.PI*2);
+    ctx.fillStyle=`rgb(${rc},${gc},${bc})`; ctx.fill();
+    ctx.strokeStyle='rgba(200,220,255,0.35)'; ctx.lineWidth=0.8; ctx.stroke();
+    // Label
+    ctx.fillStyle='rgba(160,190,255,0.65)'; ctx.font='6.5px Courier New';
+    ctx.textAlign='center'; ctx.textBaseline='bottom';
+    ctx.fillText(e.n, px, py-5.5);
+  });
+}
+
+// ══════════════════════════════════════════════════════════
 //  MAIN LOOP
 // ══════════════════════════════════════════════════════════
 let frame=0;
@@ -1060,9 +1283,11 @@ function animate(){
     if(dev==='emotiv'){brainMat.color.setRGB(c.r,c.g,c.b);brainMat.opacity=0.15+p*.40;eMeshes.forEach(m=>m.material.emissiveIntensity=0.5+p*2.0);}
     else if(dev==='muse'){museBandMat.color.setRGB(0.4+c.r*.4,0.4+c.g*.4,0.4+c.b*.4);museEMeshes.forEach((m,i)=>{if(!MUSE_ELECS[i].ref)m.material.emissiveIntensity=0.5+p*2.0;});}
     else{tgamEMat.emissiveIntensity=0.7+p*2.0;tgamGlowMat.opacity=0.5+p*.8;}
-    if(pulseTimer>Math.PI*5){pulseActive=false;pulseTimer=0;brainMat.color.setHex(0x2244aa);brainMat.opacity=0.18;}
+    if(pulseTimer>Math.PI*5){pulseActive=false;pulseTimer=0;brainMat.color.setHex(0x2244aa);brainMat.opacity=0.20;}
   }
 
+  const lf=0.10;
+  rotX+=(tRotX-rotX)*lf; rotY+=(tRotY-rotY)*lf; zoom+=(tZoom-zoom)*lf;
   camera.position.x=zoom*Math.sin(rotY)*Math.cos(rotX);
   camera.position.y=zoom*Math.sin(rotX);
   camera.position.z=zoom*Math.cos(rotY)*Math.cos(rotX);
@@ -1217,7 +1442,7 @@ document.addEventListener('keydown',e=>{
   if(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT') return;
   if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal'].forEach(id=>document.getElementById(id).classList.remove('show'));}
   if(e.key==='f'||e.key==='F'){forceV();}
-  if(e.key==='r'||e.key==='R'){rotX=0.3;rotY=Math.PI;zoom=3.5;}
+  if(e.key==='r'||e.key==='R'){tRotX=0.3;tRotY=Math.PI;tZoom=3.5;}
   if(e.key==='s'||e.key==='S'){if(!document.getElementById('settingsModal').classList.contains('show'))showAdmin();}
   if(e.key==='m'||e.key==='M'){
     if(CFG.dataSource==='ws'){showToast('Manual mode unavailable in live WS mode','#ff8040');return;}
