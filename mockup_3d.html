@@ -489,7 +489,7 @@ function wsConnect() {
     const src=document.getElementById('srcSel')?.value;
     if(src&&src!=='sim') ws.send(JSON.stringify({type:'source_change',source:src}));
   };
-  ws.onclose = () => { wsSetStatus('error'); CFG.dataSource='sim'; clearTimeout(wsReTimer); wsReTimer=setTimeout(wsConnect,3000); };
+  ws.onclose = () => { wsSetStatus('error'); CFG.dataSource='sim'; if(EXP.active)_expDone(); clearTimeout(wsReTimer); wsReTimer=setTimeout(wsConnect,3000); };
   ws.onerror = () => wsSetStatus('error');
   ws.onmessage = e => {
     try {
@@ -547,6 +547,7 @@ function onDeviceChange() {
   CFG.activeDevice=dev;
   const prof=getProf();
 
+  if(EXP.active)_expDone();
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vCooldown=0;
   CFG.vals=new Float32Array(14).fill(50);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
@@ -778,8 +779,8 @@ function simStep(){
     const focus=Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch/100;
     bands.alpha=Math.max(0,Math.min(100,60-focus*40+(Math.random()-.5)*10));
     bands.beta =Math.max(0,Math.min(100,30+focus*50+(Math.random()-.5)*10));
-    bands.theta=Math.max(0,Math.min(100,40+(Math.random()-.5)*15));
-    bands.delta=Math.max(0,Math.min(100,30+(Math.random()-.5)*10));
+    bands.theta=Math.max(0,Math.min(100,45-focus*25+(Math.random()-.5)*12));
+    bands.delta=Math.max(0,Math.min(100,35-focus*20+(Math.random()-.5)*10));
     bands.gamma=Math.max(0,Math.min(100,20+focus*30+(Math.random()-.5)*8));
     const prof2=getProf();
     if(prof2.showFAA){
@@ -884,7 +885,8 @@ function updateUI(avg){
   const prof=getProf();
   document.getElementById('concNum').textContent=Math.round(avg)+'%';
   document.getElementById('concNum').style.color=jetStr(avg/100);
-  const trendDiff=avg-RPT._lastAvg;
+  const hist=CFG.history;
+  const trendDiff=hist.length>=6?hist[hist.length-1]-hist[hist.length-6]:0;
   const trendEl=document.getElementById('concTrend');
   if(trendDiff>1.2){trendEl.textContent='↑ RISING';trendEl.style.color='#ff9060';}
   else if(trendDiff<-1.2){trendEl.textContent='↓ FALLING';trendEl.style.color='#60a0ff';}
@@ -979,10 +981,13 @@ function drawGraph(){
     ctx.fillStyle='rgba(255,160,40,0.06)'; ctx.fillRect(pL,y1,W-pL-pR,y2-y1);
   }
 
-  [[CFG.thLow,'rgba(80,120,255,0.5)'],[CFG.thHigh,'rgba(255,110,50,0.5)']].forEach(([th,col])=>{
+  [[CFG.thLow,'rgba(80,120,255,0.5)','LOW'],[CFG.thHigh,'rgba(255,110,50,0.5)','HIGH']].forEach(([th,col,lbl])=>{
     const y=pT+(1-th/100)*(H-pT-pB);
     ctx.strokeStyle=col; ctx.lineWidth=1; ctx.setLineDash([3,3]);
     ctx.beginPath(); ctx.moveTo(pL,y); ctx.lineTo(W-pR,y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font='6px Courier New'; ctx.fillStyle=col; ctx.textAlign='left';
+    ctx.fillText(lbl,pL+2,y-2);
   });
   ctx.setLineDash([]);
 
@@ -1132,7 +1137,7 @@ function startCalibration(){
   document.getElementById('calModal').classList.add('show');
   ws.send(JSON.stringify({type:'calibrate_start'}));
 }
-function loadCalibration(){if(!ws||ws.readyState!==WebSocket.OPEN)return;ws.send(JSON.stringify({type:'calibrate_load'}));}
+function loadCalibration(){if(!ws||ws.readyState!==WebSocket.OPEN){showToast('WebSocket not connected — connect to a device first.');return;}ws.send(JSON.stringify({type:'calibrate_load'}));}
 function _handleCalibration(d){
   const state=d.state||d.phase,bar=document.getElementById('calBar');
   if(state==='relax'){bar.style.width=((d.progress||0)*50).toFixed(1)+'%';document.getElementById('calTimer').textContent=Math.ceil(d.remaining??CAL.relax);document.getElementById('calPhaseLabel').textContent='PHASE 1/2 · RELAX';}
@@ -1146,7 +1151,7 @@ function _handleCalibration(d){
       document.getElementById('calResult').style.display='block';
       document.getElementById('calResult').innerHTML=`Relax: <b>${r.relax.conc_mean}</b> ± ${r.relax.conc_std}<br>Focus: <b>${r.focus.conc_mean}</b> ± ${r.focus.conc_std}<br>Low=<b>${t.th_low}</b> High=<b>${t.th_high}</b> Slope=<b>${t.slope}</b><br>Quality: <b style="color:${q.grade==='A'?'#80ffb0':q.grade==='B'?'#80d0ff':'#ffb080'}">${q.grade}</b> (${q.score}/100)`;
     }
-  } else if(state==='not_found'){alert('No saved calibration. Run calibration first.');}
+  } else if(state==='not_found'){showToast('No saved calibration. Run calibration first.','#ffcc44');}
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1203,7 +1208,7 @@ function _handleExperiment(d){
     if(d.transition){document.getElementById('expBar').style.opacity='.5';setTimeout(()=>document.getElementById('expBar').style.opacity='1',400);}
   } else if(d.state==='done'||d.state==='stopped'){
     _expDone();
-    if(d.summary){const s=d.summary;const lines=Object.entries(s.phase_stats||{}).map(([k,v])=>`${k}: ${v.mean_concentration}% avg`).join('\n');alert(`Experiment complete!\n\n${lines}\n\nMarkers: ${s.n_markers}, V-patterns: ${s.n_vpattern}`);}
+    if(d.summary){const s=d.summary;const topPhase=Object.entries(s.phase_stats||{}).sort(([,a],[,b])=>b.mean_concentration-a.mean_concentration)[0];showToast(`Experiment done · Markers:${s.n_markers} V:${s.n_vpattern}${topPhase?` · Peak:${topPhase[0]} ${topPhase[1].mean_concentration}%`:''}`, '#80ffb0');}
   }
 }
 </script>
