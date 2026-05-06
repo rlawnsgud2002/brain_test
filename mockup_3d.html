@@ -220,13 +220,13 @@
       <div id="ctrlBadge" style="text-align:center;font-size:9px;margin-top:4px;padding:3px;border-radius:3px;background:rgba(100,140,255,0.07);color:#3a5a8a;border:1px solid rgba(100,140,255,0.14);letter-spacing:1px">CTRL · INACTIVE</div>
       <hr class="sep">
       <div class="state-grid">
-        <div class="state-cell">
-          <span class="sc-label">ENG IDX</span>
+        <div class="state-cell" title="Engagement Index = β/(α+θ)  [Pope et al. 1995]">
+          <span class="sc-label">β/(α+θ)</span>
           <span class="sc-val" id="baRatio" style="color:#7090ff">0.500</span>
         </div>
-        <div class="state-cell" id="faaCell">
-          <span class="sc-label">FAA</span>
-          <span class="sc-val" id="faaVal" style="color:#40cc88">0.00</span>
+        <div class="state-cell" id="faaCell" title="Frontal Alpha Asymmetry = ln(Rα) − ln(Lα)  [Davidson 1998]">
+          <span class="sc-label">FAA ln</span>
+          <span class="sc-val" id="faaVal" style="color:#40cc88">0.000</span>
         </div>
         <div class="state-cell" id="meditCell" style="display:none">
           <span class="sc-label">MEDITAT</span>
@@ -931,6 +931,8 @@ function simStep(){
     if(CFG.cqVals[i]<0.55) CFG.cqVals[i]+=0.014;  // drift toward good contact in sim
   }
   if(CFG.dataSource!=='ws'){
+    // Alpha rhythm slow oscillation — computed regardless of mode
+    const alphaOsc=Math.sin(Date.now()/3200)*3;
     if(vPhase){
       vPhase.step++;
       const t=vPhase.step/vPhase.total,conc=t<0.4?75-(t/.4)*60:15+((t-.4)/.6)*85;
@@ -939,26 +941,51 @@ function simStep(){
     } else if(CFG.manual){
       for(let i=0;i<nch;i++) CFG.vals[i]=CFG.manVal+(Math.random()-.5)*7;
     } else {
-      for(let i=0;i<nch;i++){CFG.vals[i]+=(Math.random()-.5)*5;CFG.vals[i]=Math.max(5,Math.min(95,CFG.vals[i]));}
+      // Correlated channel simulation: common component + individual noise
+      // Real EEG channels have spatial correlation via volume conduction
+      const commonDrift=(Math.random()-.5)*2.8;
+      for(let i=0;i<nch;i++){
+        // Spatial weight: electrodes near F/O have higher alpha coherence
+        const e=CFG.electrodes[i];
+        const frontal=e?e.y<-0.3:false, occipital=e?e.y>0.5:false;
+        const localNoise=(Math.random()-.5)*(frontal?3.2:occipital?3.6:3.0);
+        const regionBias=frontal?(bands.beta>60?1.5:-1):occipital?(bands.alpha>60?1.5:-1):0;
+        CFG.vals[i]+=commonDrift*0.55+localNoise*0.45+regionBias*0.3;
+        CFG.vals[i]=Math.max(5,Math.min(95,CFG.vals[i]));
+      }
     }
     const focus=Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch/100;
-    bands.alpha=Math.max(0,Math.min(100,60-focus*40+(Math.random()-.5)*10));
-    bands.beta =Math.max(0,Math.min(100,30+focus*50+(Math.random()-.5)*10));
-    bands.theta=Math.max(0,Math.min(100,45-focus*25+(Math.random()-.5)*12));
-    bands.delta=Math.max(0,Math.min(100,35-focus*20+(Math.random()-.5)*10));
-    bands.gamma=Math.max(0,Math.min(100,20+focus*30+(Math.random()-.5)*8));
+    // Realistic band power dynamics with 1/f slope approximation
+    // Alpha: inversely related to arousal/focus (alpha desynchronization)
+    bands.alpha=Math.max(2,Math.min(100,58-focus*42+alphaOsc+(Math.random()-.5)*7));
+    // Beta: increases with cognitive demand and focus
+    bands.beta =Math.max(2,Math.min(100,24+focus*52+(Math.random()-.5)*8));
+    // Theta: peaks with memory load, drowsiness; moderate during focus
+    bands.theta=Math.max(2,Math.min(100,38-focus*18+(Math.random()-.5)*9));
+    // Delta: slow wave, inversely related to wakefulness
+    bands.delta=Math.max(2,Math.min(100,30-focus*16+(Math.random()-.5)*8));
+    // Gamma: high frequency, correlates with cognitive processing intensity
+    bands.gamma=Math.max(1,Math.min(100,14+focus*34+(Math.random()-.5)*7));
     const prof2=getProf();
     if(prof2.showFAA){
       const isMuse=CFG.activeDevice==='muse';
-      const lF=isMuse?CFG.vals[1]:(CFG.vals[0]+CFG.vals[2]+CFG.vals[3])/3;
-      const rF=isMuse?CFG.vals[4]:(CFG.vals[1]+CFG.vals[4]+CFG.vals[5])/3;
-      bands.faa=Math.max(-0.5,Math.min(0.5,((rF-lF)/100+(Math.random()-.5)*0.04)));
+      // Proper FAA: ln(right_frontal_alpha) - ln(left_frontal_alpha)
+      // Positive FAA = left frontal inhibited = approach motivation
+      const lIdxs=isMuse?[1]:[0,2,3]; // AF3,F7,F3 for Emotiv
+      const rIdxs=isMuse?[4]:[1,4,5]; // AF4,F8,F4 for Emotiv
+      const lPow=lIdxs.reduce((s,i)=>s+Math.max(0.1,CFG.vals[i]),0)/lIdxs.length;
+      const rPow=rIdxs.reduce((s,i)=>s+Math.max(0.1,CFG.vals[i]),0)/rIdxs.length;
+      // Normalize to -0.5..0.5 range
+      const rawFAA=(Math.log(rPow)-Math.log(lPow))/Math.log(100);
+      bands.faa=Math.max(-0.5,Math.min(0.5,rawFAA+(Math.random()-.5)*0.025));
     }
     if(CFG.activeDevice==='tgam'){
       bands.poor_signal=Math.max(0,Math.min(50,bands.poor_signal+(Math.random()-.48)*3));
       bands.meditation=Math.max(0,Math.min(100,(bands.meditation??50)+(Math.random()-.48)*4));
     }
-    bands.engagement_index=Math.max(0,Math.min(1,focus+(Math.random()-.5)*0.06));
+    // Engagement Index: β / (α + θ)  — real formula (Pope et al. 1995)
+    const eiDenom=Math.max(0.1,(bands.alpha||50)+(bands.theta||40));
+    bands.engagement_index=Math.max(0,Math.min(2,(bands.beta||30)/eiDenom+((Math.random()-.5)*0.04)));
   }
   const avg=Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
   CFG.history.push(avg);
@@ -1072,13 +1099,19 @@ function updateUI(avg){
   const el2=Math.round((Date.now()-RPT.sessionStart)/1000);
   document.getElementById('topTimer').textContent=`${String(Math.floor(el2/60)).padStart(2,'0')}:${String(el2%60).padStart(2,'0')}`;
 
+  // ENG IDX = β/(α+θ). Typical range 0.2–1.5; display 3dp
   const ei=bands.engagement_index??(avg/100);
-  document.getElementById('baRatio').textContent=(typeof ei==='number'?ei:0).toFixed(3);
+  const eiEl=document.getElementById('baRatio');
+  eiEl.textContent=(typeof ei==='number'?ei:0).toFixed(3);
+  eiEl.style.color=ei>1.0?'#ff8040':ei>0.5?'#ffcc44':ei>0.25?'#40cc88':'#6480cc';
 
   if(prof.showFAA){
     const faa=bands.faa??0;
-    document.getElementById('faaVal').textContent=faa.toFixed(3);
-    document.getElementById('faaVal').style.color=faa>0.05?'#ff9060':faa<-0.05?'#60a0ff':'#40cc88';
+    // FAA = ln(R_frontal_α) − ln(L_frontal_α). Positive = approach motivation (Davidson 1998)
+    const faaEl=document.getElementById('faaVal');
+    faaEl.textContent=(faa>=0?'+':'')+faa.toFixed(3);
+    faaEl.style.color=faa>0.05?'#ff9060':faa<-0.05?'#60a0ff':'#40cc88';
+    faaEl.title='Frontal Alpha Asymmetry = ln(R) − ln(L). + = approach motivation, − = withdrawal';
     document.getElementById('faaLabel').textContent=faa>0.05?'↑ APPROACH':faa<-0.05?'↓ WITHDRAW':'─ NEUTRAL';
   }
   if(prof.showMedit){
@@ -1119,8 +1152,8 @@ function updateUI(avg){
 
   const bk=['delta','theta','alpha','beta','gamma'],tot=bk.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
   bk.forEach(k=>{
-    const pct=Math.min(100,(bands[k]||0)/tot*100),cap=k[0].toUpperCase()+k.slice(1);
-    document.getElementById('b'+cap).textContent=(bands[k]||0).toFixed(1);
+    const raw=bands[k]||0, pct=Math.min(100,raw/tot*100), cap=k[0].toUpperCase()+k.slice(1);
+    document.getElementById('b'+cap).innerHTML=`${raw.toFixed(1)}<span style="color:#3a5070;font-size:8px;margin-left:3px">${pct.toFixed(0)}%</span>`;
     document.getElementById('b'+cap+'Bar').style.width=pct.toFixed(1)+'%';
   });
 
@@ -1226,21 +1259,34 @@ function drawGraph(){
 //  COGNITIVE STATE DETECTION
 // ══════════════════════════════════════════════════════════
 function cogState(avg){
+  // Research-backed thresholds (Stikic et al. 2011, Pope et al. 1995, Klimesch 1999)
   const b=bands;
-  const al=b.alpha||50, be=b.beta||50, th=b.theta||40, de=b.delta||35, ga=b.gamma||20;
-  const tot=Math.max(1,al+be+th+de+ga);
+  const al=b.alpha||50, be=b.beta||50, th=b.theta||40, ga=b.gamma||20;
+  const tot=Math.max(1,al+be+th+(b.delta||35)+ga);
   const alRel=al/tot, beRel=be/tot, thRel=th/tot;
-  const betaAlpha=be/Math.max(1,al);
-  const thetaBeta=th/Math.max(1,be);
-  if(avg>82&&beRel>0.30)   return{label:'DEEP FOCUS',    col:'#ff6020',bg:'rgba(255,60,0,.30)'};
-  if(avg>68)               return{label:'FOCUSED',       col:'#ff9060',bg:'rgba(255,80,0,.24)'};
-  if(avg>55&&betaAlpha>1.1)return{label:'ACTIVE',        col:'#ffcc44',bg:'rgba(200,160,0,.24)'};
-  if(thRel>0.28&&avg<35)   return{label:'DROWSY',        col:'#9090ff',bg:'rgba(80,80,220,.22)'};
-  if(alRel>0.30&&avg<42)   return{label:'MEDITATING',    col:'#60ffaa',bg:'rgba(0,200,80,.22)'};
-  if(avg<30)               return{label:'RELAXED',       col:'#60a0ff',bg:'rgba(0,100,200,.24)'};
-  if(ga>55)                return{label:'HIGHLY ALERT',  col:'#ffff60',bg:'rgba(200,200,0,.24)'};
-  if(avg>42&&avg<=55)      return{label:'TRANSITION',    col:'#60dd90',bg:'rgba(0,180,100,.20)'};
-  return                          {label:'NEUTRAL',      col:'#a0b8e0',bg:'rgba(100,140,255,.14)'};
+  // EI = β/(α+θ) — core engagement metric
+  const ei=be/Math.max(1,al+th);
+  // FAA sign → approach vs. withdrawal tendency
+  const faa=b.faa||0;
+
+  // DEEP FOCUS: very high EI + high beta relative + high avg
+  if(avg>78&&ei>1.1&&beRel>0.28) return{label:'DEEP FOCUS',    col:'#ff5010',bg:'rgba(255,50,0,.32)'};
+  // FOCUSED: high EI, above thHigh
+  if(avg>CFG.thHigh&&ei>0.7)     return{label:'FOCUSED',       col:'#ff9060',bg:'rgba(255,80,0,.24)'};
+  // ACTIVE: moderate-high, beta dominant
+  if(avg>50&&ei>0.65)            return{label:'ACTIVE',         col:'#ffcc44',bg:'rgba(200,160,0,.22)'};
+  // DROWSY: theta-dominant + low beta (Klimesch 1999 alpha desync + theta sync)
+  if(thRel>0.30&&beRel<0.20&&avg<45) return{label:'DROWSY',   col:'#9090ff',bg:'rgba(80,80,220,.22)'};
+  // MEDITATING: alpha-dominant (alRel>35%), low engagement
+  if(alRel>0.33&&ei<0.5&&avg<48) return{label:'MEDITATING',    col:'#40ffaa',bg:'rgba(0,200,80,.22)'};
+  // RELAXED: below thLow, alpha present
+  if(avg<CFG.thLow&&alRel>0.22)  return{label:'RELAXED',       col:'#60a0ff',bg:'rgba(0,100,200,.24)'};
+  // HIGHLY ALERT: gamma elevated (cognitive overload / alerting)
+  if(ga>52&&ei>0.9)              return{label:'HIGHLY ALERT',   col:'#ffff50',bg:'rgba(200,200,0,.22)'};
+  // FLOW state: moderate alpha + moderate beta, low theta (Csikszentmihalyi concept)
+  if(beRel>0.22&&alRel>0.18&&thRel<0.22&&avg>45&&avg<70) return{label:'FLOW',col:'#60ffcc',bg:'rgba(0,200,160,.20)'};
+  if(avg>45&&avg<=CFG.thHigh)    return{label:'TRANSITION',     col:'#60dd90',bg:'rgba(0,180,100,.18)'};
+  return                                {label:'NEUTRAL',        col:'#a0b8e0',bg:'rgba(100,140,255,.13)'};
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1249,12 +1295,19 @@ function cogState(avg){
 function updateCQ(){
   const nch=getProf().nCh, elecs=CFG.electrodes;
   if(!CFG.cqVals) return;
+  // Convert quality (0-1) → impedance kΩ: exponential mapping
+  // 1.0 → ~1.5 kΩ (excellent), 0.7 → ~5 kΩ (good), 0.4 → ~20 kΩ (poor)
+  const toKOhm=q=>Math.round(Math.exp((1-Math.max(0,q))*4.0)*1.5*10)/10;
   const items=elecs.slice(0,nch).map((e,i)=>{
-    const q=(CFG.cqVals[i]||0.85)*100;
-    const col=q>70?'#00cc66':q>42?'#ffcc44':'#ff5544';
+    const q=CFG.cqVals[i]||0.85;
+    const kO=toKOhm(q);
+    const col=kO<5?'#00cc66':kO<15?'#ffcc44':'#ff5544';
+    const barW=Math.max(4,Math.min(100,q*100)).toFixed(0);
+    const label=kO<10?`${kO}kΩ`:`${Math.round(kO)}kΩ`;
     return `<div class="cq-item" style="border-left-color:${col}">
       <span class="ci-name">${e.n}</span>
-      <div class="ci-track"><div class="ci-fill" style="width:${q.toFixed(0)}%;background:${col}"></div></div>
+      <div class="ci-track"><div class="ci-fill" style="width:${barW}%;background:${col}"></div></div>
+      <span style="font-size:8px;color:${col};min-width:30px;text-align:right">${label}</span>
     </div>`;
   }).join('');
   const el=document.getElementById('cqGrid');
@@ -1524,15 +1577,37 @@ function showReport(){
   const minC=hist.length?Math.min(...hist).toFixed(1):'-';
   const delays=RPT.events.filter(e=>e.peakDelay!=null).map(e=>+e.peakDelay);
   const avgDelay=delays.length?(delays.reduce((a,b)=>a+b)/delays.length).toFixed(1)+'s':'N/A';
+
+  // Session quality score: CQ average + focus stability
+  const cqArr=Array.from(CFG.cqVals||[]).slice(0,getProf().nCh);
+  const avgCQ=cqArr.length?(cqArr.reduce((s,v)=>s+v,0)/cqArr.length*100).toFixed(0):'-';
+  const focusStd=hist.length>5?Math.sqrt(hist.reduce((s,v)=>s+(v-(+avgC))**2,0)/hist.length).toFixed(1):'-';
+  const vRate=dur>60?(RPT.events.length/(dur/60)).toFixed(2)+'/min':'N/A';
+  // Band power at end of session
+  const bkFinal=['delta','theta','alpha','beta','gamma'];
+  const bkTot=bkFinal.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
+  const bandRow=bkFinal.map(k=>`<td style="color:#8090c0">${((bands[k]||0)/bkTot*100).toFixed(0)}%</td>`).join('');
+  // Session label
+  const sn=document.getElementById('sessionName');
+  const snLabel=sn&&sn.value?`<div class="report-stat"><span>Session Name</span><span>${sn.value}</span></div>`:'';
+
   document.getElementById('reportSummary').innerHTML=`
-    <div class="report-stat"><span>Session Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
+    ${snLabel}
+    <div class="report-stat"><span>Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
     <div class="report-stat"><span>Device</span><span>${getProf().label}</span></div>
     <div class="report-stat"><span>Data Source</span><span>${document.getElementById('srcSel').value.toUpperCase()}</span></div>
-    <div class="report-stat"><span>Avg Concentration</span><span>${avgC}%</span></div>
-    <div class="report-stat"><span>Max Concentration</span><span>${maxC}%</span></div>
-    <div class="report-stat"><span>Min Concentration</span><span>${minC}%</span></div>
-    <div class="report-stat"><span>V-Pattern Events</span><span>${RPT.events.length}</span></div>
+    <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">CONCENTRATION</div>
+    <div class="report-stat"><span>Mean ± Std Dev</span><span>${avgC}% ± ${focusStd}</span></div>
+    <div class="report-stat"><span>Peak</span><span>${maxC}%</span></div>
+    <div class="report-stat"><span>Minimum</span><span>${minC}%</span></div>
+    <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">BAND POWER (relative %)</div>
+    <table class="report-table" style="margin-bottom:6px"><thead><tr><th>δ</th><th>θ</th><th>α</th><th>β</th><th>γ</th></tr></thead><tbody><tr>${bandRow}</tr></tbody></table>
+    <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">V-PATTERN</div>
+    <div class="report-stat"><span>Events</span><span>${RPT.events.length}</span></div>
+    <div class="report-stat"><span>Rate</span><span>${vRate}</span></div>
     <div class="report-stat"><span>Avg Peak Delay</span><span>${avgDelay}</span></div>
+    <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">SIGNAL QUALITY</div>
+    <div class="report-stat"><span>Avg Electrode CQ</span><span style="color:${+avgCQ>70?'#00cc66':+avgCQ>45?'#ffcc44':'#ff6644'}">${avgCQ}%</span></div>
     <div class="report-stat"><span>Total Samples</span><span>${RPT._count}</span></div>`;
   document.getElementById('reportEvents').innerHTML=RPT.events.length===0
     ?'<div style="font-size:10px;color:#6480cc;padding:5px 0">No events yet</div>'
