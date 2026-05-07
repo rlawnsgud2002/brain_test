@@ -499,13 +499,13 @@ const DEVICE_PROFILES = {
       {v:'device',l:'EMOTIV EPOC X (LIVE)'}
     ],
     electrodes:[
-      {n:'AF3',x:-0.26,y:-0.60},{n:'AF4',x: 0.26,y:-0.60},
-      {n:'F7', x:-0.72,y:-0.48},{n:'F3', x:-0.38,y:-0.32},
-      {n:'F4', x: 0.38,y:-0.32},{n:'F8', x: 0.72,y:-0.48},
-      {n:'FC5',x:-0.59,y:-0.13},{n:'FC6',x: 0.59,y:-0.13},
-      {n:'T7', x:-0.85,y: 0.05},{n:'T8', x: 0.85,y: 0.05},
-      {n:'P7', x:-0.66,y: 0.50},{n:'P8', x: 0.66,y: 0.50},
-      {n:'O1', x:-0.26,y: 0.72},{n:'O2', x: 0.26,y: 0.72}
+      {n:'AF3',x:-0.33,y:-0.59},{n:'AF4',x: 0.33,y:-0.59},
+      {n:'F7', x:-0.71,y:-0.44},{n:'F3', x:-0.40,y:-0.34},
+      {n:'F4', x: 0.40,y:-0.34},{n:'F8', x: 0.71,y:-0.44},
+      {n:'FC5',x:-0.62,y:-0.15},{n:'FC6',x: 0.62,y:-0.15},
+      {n:'T7', x:-0.87,y: 0.03},{n:'T8', x: 0.87,y: 0.03},
+      {n:'P7', x:-0.72,y: 0.42},{n:'P8', x: 0.72,y: 0.42},
+      {n:'O1', x:-0.27,y: 0.77},{n:'O2', x: 0.27,y: 0.77}
     ],
     activeIdx:[0,1,2,3,4,5,6,7,8,9,10,11,12,13],
     regions:[
@@ -526,12 +526,12 @@ const DEVICE_PROFILES = {
       {v:'muse',  l:'MUSE S (LIVE)'}
     ],
     electrodes:[
-      {n:'TP9', x:-0.62,y: 0.28},
-      {n:'AF7', x:-0.36,y:-0.78},
-      {n:'FP1', x:-0.28,y:-0.90,ref:true},
-      {n:'FP2', x: 0.28,y:-0.90,ref:true},
-      {n:'AF8', x: 0.36,y:-0.78},
-      {n:'TP10',x: 0.62,y: 0.28}
+      {n:'TP9', x:-0.95,y: 0.22},
+      {n:'AF7', x:-0.46,y:-0.76},
+      {n:'FP1', x:-0.18,y:-0.88,ref:true},
+      {n:'FP2', x: 0.18,y:-0.88,ref:true},
+      {n:'AF8', x: 0.46,y:-0.76},
+      {n:'TP10',x: 0.95,y: 0.22}
     ],
     activeIdx:[0,1,4,5],
     regions:[
@@ -571,6 +571,17 @@ const CFG = {
 };
 const getProf = () => DEVICE_PROFILES[CFG.activeDevice];
 const getRegs = () => getProf().regions;
+
+// ─── shared constants & micro-helpers ───────────────────────
+const BANDS = ['delta','theta','alpha','beta','gamma'];
+const toKOhm = q => Math.round(Math.exp((1-Math.max(0,q))*4.0)*1.5*10)/10;
+const cqColor = kO => kO<5?'#00cc66':kO<15?'#ffcc44':'#ff5544';
+const DOM_THROTTLE = 12; // frame divisor → ~5 Hz DOM updates at 60 fps
+function _fitCanvas(cv,W,H,applyStyle){
+  const dpr=window.devicePixelRatio||1, pw=Math.round(W*dpr), ph=Math.round(H*dpr);
+  if(cv.width!==pw||cv.height!==ph){cv.width=pw;cv.height=ph;if(applyStyle){cv.style.width=W+'px';cv.style.height=H+'px';}}
+  const ctx=cv.getContext('2d'); ctx.setTransform(dpr,0,0,dpr,0,0); return ctx;
+}
 
 // ══════════════════════════════════════════════════════════
 //  SESSION TRACKER
@@ -636,7 +647,7 @@ function wsConnect() {
         CFG.dataSource = 'ws';
       } else if (d.type === 'state_snapshot') {
         d.channels.forEach((v,i) => { CFG.vals[i]=Math.max(0,Math.min(100,v)); });
-        if (d.bands) ['delta','theta','alpha','beta','gamma'].forEach(k=>bands[k]=d.bands[k]);
+        if (d.bands) BANDS.forEach(k=>bands[k]=d.bands[k]);
         if (d.source) {
           const m={sim:'sim',deap:'deap',mental:'mental',mental_state:'mental',emotiv:'device'};
           const sel=document.getElementById('srcSel'), mapped=m[d.source]||'sim';
@@ -672,7 +683,7 @@ function onDeviceChange() {
 
   if(EXP.active)_expDone();
   if(CAL.active){CAL.active=false;document.getElementById('calModal').classList.remove('show');}
-  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vCooldown=0; CFG._lastStepTime=0;
+  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vCooldown=0; CFG._lastStepTime=0; frame=0;
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50); CFG.cqVals=new Float32Array(14).fill(0.88);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
@@ -812,11 +823,23 @@ const museEMeshes=MUSE_ELECS.map((e,i)=>{const m=new THREE.Mesh(new THREE.Sphere
 const museGlows=MUSE_ELECS.map(e=>{const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:glowTex,transparent:true,opacity:e.ref?0:0.5,blending:THREE.AdditiveBlending}));sp.scale.set(0.35,0.35,1);sp.position.copy(toSphere(e.x,e.y,1.03));sp.visible=false;scene.add(sp);return sp;});
 const museBandMat=new THREE.MeshPhongMaterial({color:0x888888,transparent:true,opacity:0.65,shininess:40});
 const museBandPts=[
-  {nx:-0.62,ny:0.28},{nx:-0.80,ny:0.08},{nx:-0.80,ny:-0.15},
-  {nx:-0.68,ny:-0.38},{nx:-0.52,ny:-0.58},{nx:-0.36,ny:-0.78},
-  {nx:-0.28,ny:-0.90},{nx:0.00,ny:-0.94},{nx:0.28,ny:-0.90},
-  {nx:0.36,ny:-0.78},{nx:0.52,ny:-0.58},{nx:0.68,ny:-0.38},
-  {nx:0.80,ny:-0.15},{nx:0.80,ny:0.08},{nx:0.62,ny:0.28}
+  {nx:-0.95,ny: 0.22},  // TP9 — behind left ear
+  {nx:-0.96,ny: 0.07},  // left temporal going forward
+  {nx:-0.90,ny:-0.10},  // above left ear
+  {nx:-0.82,ny:-0.28},  // left frontal-temporal
+  {nx:-0.70,ny:-0.44},  // F7/FT9 region
+  {nx:-0.55,ny:-0.60},  // AF7 region
+  {nx:-0.40,ny:-0.74},  // between AF7 and Fp1
+  {nx:-0.22,ny:-0.86},  // near Fp1
+  {nx: 0.00,ny:-0.94},  // Fpz forehead centre
+  {nx: 0.22,ny:-0.86},
+  {nx: 0.40,ny:-0.74},
+  {nx: 0.55,ny:-0.60},
+  {nx: 0.70,ny:-0.44},
+  {nx: 0.82,ny:-0.28},
+  {nx: 0.90,ny:-0.10},
+  {nx: 0.96,ny: 0.07},
+  {nx: 0.95,ny: 0.22}   // TP10 — behind right ear
 ].map(e=>toSphere(e.nx,e.ny,1.04));
 const museBandMesh=new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(museBandPts),120,0.024,10,false),museBandMat);
 museBandMesh.visible=false; scene.add(museBandMesh);
@@ -872,6 +895,7 @@ canvas3d.addEventListener('dblclick',()=>{tRotX=0.3;tRotY=Math.PI;tZoom=3.5;});
 //  TOOLTIP — device-aware raycaster
 // ══════════════════════════════════════════════════════════
 const raycaster=new THREE.Raycaster(),mouse2d=new THREE.Vector2(),tooltip=document.getElementById('tooltip');
+const ttName=tooltip.querySelector('.t-name'), ttVal=tooltip.querySelector('.t-val');
 raycaster.params.Mesh={threshold:0.05};
 
 function _tooltipTargets(){
@@ -890,15 +914,13 @@ window.addEventListener('mousemove',e=>{
   if(hits.length>0){
     const idx=meshes.indexOf(hits[0].object),elec=elecs[idx],v=CFG.vals[idx];
     const regionName=(getProf().regions.find(r=>r.idxs.includes(idx))?.name)||'—';
-    const kO=(q=>Math.round(Math.exp((1-Math.max(0,q))*4.0)*1.5*10)/10)(CFG.cqVals?.[idx]??0.85);
-    const cqCol=kO<5?'#00cc66':kO<15?'#ffcc44':'#ff5544';
-    const cqStr=kO<10?`${kO}kΩ`:`${Math.round(kO)}kΩ`;
-    const bk=['delta','theta','alpha','beta','gamma'];
-    const dom=bk.reduce((a,k)=>(bands[k]||0)>(bands[a]||0)?k:a,'delta');
-    tooltip.querySelector('.t-name').textContent=elec.n+(elec.ref?' (REF)':'');
-    tooltip.querySelector('.t-val').innerHTML=elec.ref
+    const kO=toKOhm(CFG.cqVals?.[idx]??0.85);
+    const col=cqColor(kO), cqStr=kO<10?`${kO}kΩ`:`${Math.round(kO)}kΩ`;
+    const dom=BANDS.reduce((a,k)=>(bands[k]||0)>(bands[a]||0)?k:a,'delta');
+    ttName.textContent=elec.n+(elec.ref?' (REF)':'');
+    ttVal.innerHTML=elec.ref
       ?'<span style="color:#5070aa">Reference electrode</span>'
-      :`Activity: <span style="color:${jetStr(v/100)};font-weight:bold">${v.toFixed(1)}%</span><br><span style="font-size:9px;color:#4a6090">${regionName} · CQ:<span style="color:${cqCol}"> ${cqStr}</span> · ${dom.toUpperCase()}</span>`;
+      :`Activity: <span style="color:${jetStr(v/100)};font-weight:bold">${v.toFixed(1)}%</span><br><span style="font-size:9px;color:#4a6090">${regionName} · CQ:<span style="color:${col}"> ${cqStr}</span> · ${dom.toUpperCase()}</span>`;
     tooltip.style.display='block'; tooltip.style.left=(e.clientX+14)+'px'; tooltip.style.top=(e.clientY-38)+'px';
   } else { tooltip.style.display='none'; }
 });
@@ -1141,9 +1163,9 @@ function updateUI(avg){
   else{const cs=cogState(avg);badge.textContent=cs.label;badge.style.cssText=`background:${cs.bg};color:${cs.col};animation:none`;}
 
   // CQ panel — throttled to ~5Hz (every other sim step)
-  if(frame%12===0) updateCQ();
+  if(frame%DOM_THROTTLE===0) updateCQ();
 
-  const bk=['delta','theta','alpha','beta','gamma'],tot=bk.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
+  const bk=BANDS,tot=bk.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
   bk.forEach(k=>{
     const raw=bands[k]||0, pct=Math.min(100,raw/tot*100), cap=k[0].toUpperCase()+k.slice(1);
     document.getElementById('b'+cap).innerHTML=`${raw.toFixed(1)}<span style="color:#3a5070;font-size:8px;margin-left:3px">${pct.toFixed(0)}%</span>`;
@@ -1158,12 +1180,12 @@ function updateUI(avg){
     document.getElementById('hemiStatus').textContent=Math.abs(lAvg-rAvg)<8?'BALANCED':lAvg>rAvg?'L DOMINANT':'R DOMINANT';
   }
 
-  if(frame%12===0) document.getElementById('regionList').innerHTML=getRegs().map(r=>{
+  if(frame%DOM_THROTTLE===0) document.getElementById('regionList').innerHTML=getRegs().map(r=>{
     const rv=r.idxs.reduce((s,i)=>s+CFG.vals[i],0)/r.idxs.length,rc=jetStr(rv/100);
     return `<div style="margin-bottom:4px"><div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px"><span style="color:${r.color}">${r.name}</span><span style="color:${rc};font-weight:bold">${rv.toFixed(1)}%</span></div><div class="bar-bg"><div class="bar-fill" style="background:${rc};width:${rv}%"></div></div></div>`;
   }).join('');
 
-  if(frame%12===0) document.getElementById('electrodeList').innerHTML=CFG.electrodes.map((e,i)=>{
+  if(frame%DOM_THROTTLE===0) document.getElementById('electrodeList').innerHTML=CFG.electrodes.map((e,i)=>{
     const active=!e.ref,v=CFG.vals[i],vc=active?jetStr(v/100):'#334455';
     const dotCol=active?jetStr(v/100):'rgba(60,70,100,0.5)';
     const nameStr=e.ref?`${e.n} <span style="font-size:7px;color:#334466">REF</span>`:e.n;
@@ -1176,11 +1198,9 @@ function updateUI(avg){
 //  GRAPH with Y-axis labels
 // ══════════════════════════════════════════════════════════
 function drawGraph(){
-  const cv=document.getElementById('graphCanvas'),ctx=cv.getContext('2d');
-  const dpr=window.devicePixelRatio||1;
+  const cv=document.getElementById('graphCanvas');
   const W=cv.offsetWidth,H=cv.offsetHeight;
-  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);}
-  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const ctx=_fitCanvas(cv,W,H,false);
   const pL=30,pR=5,pT=4,pB=13;
   ctx.clearRect(0,0,W,H);
 
@@ -1288,13 +1308,10 @@ function cogState(avg){
 function updateCQ(){
   const nch=getProf().nCh, elecs=CFG.electrodes;
   if(!CFG.cqVals) return;
-  // Convert quality (0-1) → impedance kΩ: exponential mapping
-  // 1.0 → ~1.5 kΩ (excellent), 0.7 → ~5 kΩ (good), 0.4 → ~20 kΩ (poor)
-  const toKOhm=q=>Math.round(Math.exp((1-Math.max(0,q))*4.0)*1.5*10)/10;
   const items=elecs.slice(0,nch).map((e,i)=>{
     const q=CFG.cqVals[i]||0.85;
     const kO=toKOhm(q);
-    const col=kO<5?'#00cc66':kO<15?'#ffcc44':'#ff5544';
+    const col=cqColor(kO);
     const barW=Math.max(4,Math.min(100,q*100)).toFixed(0);
     const label=kO<10?`${kO}kΩ`:`${Math.round(kO)}kΩ`;
     return `<div class="cq-item" style="border-left-color:${col}">
@@ -1340,13 +1357,10 @@ function loadSettingsLS(){
 // ══════════════════════════════════════════════════════════
 //  GAUGE + TOPO DRAW
 // ══════════════════════════════════════════════════════════
-const _topoOff=document.createElement('canvas'); // cached offscreen topo canvas
+const _topoOff=document.createElement('canvas');
 function drawGauge(cv, value) {
-  const dpr=window.devicePixelRatio||1;
   const W=180, H=118;
-  if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';}
-  const ctx=cv.getContext('2d');
-  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const ctx=_fitCanvas(cv,W,H,true);
   const cx=W/2, cy=H-14, r=72, lw=11;
   const startA=Math.PI*1.0, sweepA=Math.PI*1.0, endA=startA+sweepA;
 
@@ -1404,11 +1418,8 @@ function drawGauge(cv, value) {
 
 function drawTopo(cv) {
   if(!cv) return;
-  const dpr=window.devicePixelRatio||1;
   const W=cv.parentElement?.offsetWidth||180, H=120;
-  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);cv.style.width=W+'px';cv.style.height=H+'px';}
-  const ctx=cv.getContext('2d');
-  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const ctx=_fitCanvas(cv,W,H,true);
   ctx.clearRect(0,0,W,H);
   const cx=W/2, cy=H/2+2, r=Math.min(W/2,H/2)-10;
 
@@ -1577,7 +1588,7 @@ function showReport(){
   const focusStd=hist.length>5?Math.sqrt(hist.reduce((s,v)=>s+(v-(+avgC))**2,0)/hist.length).toFixed(1):'-';
   const vRate=dur>60?(RPT.events.length/(dur/60)).toFixed(2)+'/min':'N/A';
   // Band power at end of session
-  const bkFinal=['delta','theta','alpha','beta','gamma'];
+  const bkFinal=BANDS;
   const bkTot=bkFinal.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
   const bandRow=bkFinal.map(k=>`<td style="color:#8090c0">${((bands[k]||0)/bkTot*100).toFixed(0)}%</td>`).join('');
   // Session label
