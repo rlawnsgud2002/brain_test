@@ -50,7 +50,6 @@
     /* ── Panel boxes ── */
     .panel-box { background:rgba(5,8,16,0.78); border:1px solid rgba(100,140,255,0.26); border-radius:8px; padding:10px 11px; backdrop-filter:blur(8px); }
     .panel-title { font-size:9px; color:#6480cc; letter-spacing:2px; margin-bottom:7px; text-transform:uppercase; }
-    .big-num { font-size:44px; font-weight:bold; text-align:center; line-height:1; letter-spacing:-1px; }
     .sub-label { font-size:10px; text-align:center; color:#6480cc; margin-top:3px; letter-spacing:1px; }
     .state-badge { text-align:center; font-size:12px; font-weight:bold; padding:5px; border-radius:4px; margin-top:6px; letter-spacing:1px; }
     .metric-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
@@ -74,17 +73,9 @@
     /* ── Gauge ── */
     #gaugeWrap { position:relative; height:118px; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; margin-bottom:2px; }
     #gaugeCanvas { position:absolute; top:0; left:50%; transform:translateX(-50%); }
-    #gaugeLabel { font-size:9px; color:#3a5070; letter-spacing:2px; margin-top:2px; }
 
     /* ── Topo map ── */
     #topoCanvas { display:block; width:100%; border-radius:4px; }
-
-    /* ── Signal quality bars ── */
-    .cq-row { display:flex; align-items:center; gap:5px; margin-bottom:3px; }
-    .cq-name { font-size:9px; color:#5070aa; width:28px; flex-shrink:0; }
-    .cq-bar-bg { flex:1; height:4px; background:rgba(100,140,255,0.1); border-radius:2px; overflow:hidden; }
-    .cq-bar-fill { height:100%; border-radius:2px; transition:width .4s, background .4s; }
-    .cq-pct { font-size:9px; min-width:28px; text-align:right; }
 
     /* ── Improved electrode list ── */
     .e-row { display:flex; align-items:center; gap:5px; margin-bottom:2px; }
@@ -99,9 +90,6 @@
     .state-cell { background:rgba(100,140,255,0.06); border:1px solid rgba(100,140,255,0.15); border-radius:5px; padding:5px 6px; text-align:center; }
     .state-cell .sc-label { font-size:8px; color:#4a6090; letter-spacing:1.5px; display:block; margin-bottom:2px; }
     .state-cell .sc-val { font-size:14px; font-weight:bold; }
-
-    /* ── Panel section separator ── */
-    .panel-section { font-size:8px; color:#3a5070; letter-spacing:2px; text-transform:uppercase; margin:6px 0 4px; }
 
     /* ── CQ Grid ── */
     .cq-grid { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
@@ -122,9 +110,6 @@
     #sessionBar { display:flex; align-items:center; gap:8px; padding:2px 0; margin-bottom:3px; }
     .session-name { font-size:9px; color:#5070a0; border:none; background:transparent; outline:none; font-family:inherit; width:100%; letter-spacing:.5px; cursor:text; }
     .session-name:focus { color:#a0c0e0; }
-
-    /* ── Spectrum panel ── */
-    #specCanvas { display:block; width:100%; }
 
     /* ── Modals ── */
     .modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.72); justify-content:center; align-items:center; z-index:400; }
@@ -237,7 +222,7 @@
           <span class="sc-val" id="sigqVal" style="color:#00cc66">100%</span>
         </div>
       </div>
-      <div id="faaRow" style="display:none"><span id="faaLabel"></span></div>
+      <div id="faaRow" style="display:none;text-align:center;font-size:9px;letter-spacing:1px;margin-top:2px"><span id="faaLabel" style="color:#6480cc"></span></div>
       <div id="meditRow" style="display:none"></div>
       <div id="sigqRow" style="display:none">
         <div class="bar-bg" style="margin-top:3px"><div class="bar-fill" id="sigqBar" style="background:#00cc66;width:100%"></div></div>
@@ -721,7 +706,7 @@ function onDeviceChange() {
   document.getElementById('topDevName').textContent=prof.label;
 
   document.getElementById('hemiPanel').style.display      =prof.showHemi ?'':'none';
-  document.getElementById('faaRow').style.display         ='none';
+  document.getElementById('faaRow').style.display         =prof.showFAA?'block':'none';
   document.getElementById('meditRow').style.display       ='none';
   document.getElementById('sigqRow').style.display        ='none';
   document.getElementById('faaCell').style.display        =prof.showFAA  ?'':'none';
@@ -869,7 +854,7 @@ let tRotX=0.3,tRotY=Math.PI,tZoom=3.5;
 canvas3d.addEventListener('mousedown',e=>{drag=true;lastMouse={x:e.clientX,y:e.clientY};});
 window.addEventListener('mouseup',()=>drag=false);
 window.addEventListener('mousemove',e=>{if(!drag)return;tRotY-=(e.clientX-lastMouse.x)*.007;tRotX+=(e.clientY-lastMouse.y)*.007;tRotX=Math.max(-1.4,Math.min(1.4,tRotX));lastMouse={x:e.clientX,y:e.clientY};});
-canvas3d.addEventListener('wheel',e=>{tZoom=Math.max(1.8,Math.min(6,tZoom+e.deltaY*.005));});
+canvas3d.addEventListener('wheel',e=>{e.preventDefault();tZoom=Math.max(1.8,Math.min(6,tZoom+e.deltaY*.005));},{passive:false});
 let lastTouch=null,lastPinchDist=null;
 canvas3d.addEventListener('touchstart',e=>{
   if(e.touches.length===1){lastTouch=e.touches[0];lastPinchDist=null;}
@@ -904,8 +889,16 @@ window.addEventListener('mousemove',e=>{
   const hits=raycaster.intersectObjects(meshes);
   if(hits.length>0){
     const idx=meshes.indexOf(hits[0].object),elec=elecs[idx],v=CFG.vals[idx];
+    const regionName=(getProf().regions.find(r=>r.idxs.includes(idx))?.name)||'—';
+    const kO=(q=>Math.round(Math.exp((1-Math.max(0,q))*4.0)*1.5*10)/10)(CFG.cqVals?.[idx]??0.85);
+    const cqCol=kO<5?'#00cc66':kO<15?'#ffcc44':'#ff5544';
+    const cqStr=kO<10?`${kO}kΩ`:`${Math.round(kO)}kΩ`;
+    const bk=['delta','theta','alpha','beta','gamma'];
+    const dom=bk.reduce((a,k)=>(bands[k]||0)>(bands[a]||0)?k:a,'delta');
     tooltip.querySelector('.t-name').textContent=elec.n+(elec.ref?' (REF)':'');
-    tooltip.querySelector('.t-val').innerHTML=elec.ref?'<span style="color:#5070aa">Reference electrode</span>':`Activity: <span style="color:${jetStr(v/100)};font-weight:bold">${v.toFixed(1)}%</span>`;
+    tooltip.querySelector('.t-val').innerHTML=elec.ref
+      ?'<span style="color:#5070aa">Reference electrode</span>'
+      :`Activity: <span style="color:${jetStr(v/100)};font-weight:bold">${v.toFixed(1)}%</span><br><span style="font-size:9px;color:#4a6090">${regionName} · CQ:<span style="color:${cqCol}"> ${cqStr}</span> · ${dom.toUpperCase()}</span>`;
     tooltip.style.display='block'; tooltip.style.left=(e.clientX+14)+'px'; tooltip.style.top=(e.clientY-38)+'px';
   } else { tooltip.style.display='none'; }
 });
@@ -1147,8 +1140,8 @@ function updateUI(avg){
   else if(vArmed){badge.textContent='▲ RECOVERING';badge.style.cssText='background:rgba(255,160,30,.26);color:#ffaa40;animation:vsBlink .9s infinite';}
   else{const cs=cogState(avg);badge.textContent=cs.label;badge.style.cssText=`background:${cs.bg};color:${cs.col};animation:none`;}
 
-  // CQ panel
-  updateCQ();
+  // CQ panel — throttled to ~5Hz (every other sim step)
+  if(frame%12===0) updateCQ();
 
   const bk=['delta','theta','alpha','beta','gamma'],tot=bk.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
   bk.forEach(k=>{
@@ -1165,16 +1158,14 @@ function updateUI(avg){
     document.getElementById('hemiStatus').textContent=Math.abs(lAvg-rAvg)<8?'BALANCED':lAvg>rAvg?'L DOMINANT':'R DOMINANT';
   }
 
-  document.getElementById('regionList').innerHTML=getRegs().map(r=>{
+  if(frame%12===0) document.getElementById('regionList').innerHTML=getRegs().map(r=>{
     const rv=r.idxs.reduce((s,i)=>s+CFG.vals[i],0)/r.idxs.length,rc=jetStr(rv/100);
     return `<div style="margin-bottom:4px"><div style="display:flex;justify-content:space-between;font-size:10px;margin-bottom:1px"><span style="color:${r.color}">${r.name}</span><span style="color:${rc};font-weight:bold">${rv.toFixed(1)}%</span></div><div class="bar-bg"><div class="bar-fill" style="background:${rc};width:${rv}%"></div></div></div>`;
   }).join('');
 
-  document.getElementById('electrodeList').innerHTML=CFG.electrodes.map((e,i)=>{
+  if(frame%12===0) document.getElementById('electrodeList').innerHTML=CFG.electrodes.map((e,i)=>{
     const active=!e.ref,v=CFG.vals[i],vc=active?jetStr(v/100):'#334455';
     const dotCol=active?jetStr(v/100):'rgba(60,70,100,0.5)';
-    const simQ=active?Math.min(100,Math.max(40,85+(Math.sin(Date.now()/3000+i*1.7)*8))):0;
-    const qCol=simQ>70?'#00cc66':simQ>50?'#ffcc00':'#ff6644';
     const nameStr=e.ref?`${e.n} <span style="font-size:7px;color:#334466">REF</span>`:e.n;
     const barW=active?v.toFixed(0):'0';
     return `<div class="e-row"><div class="e-dot" style="background:${dotCol};box-shadow:0 0 4px ${dotCol}"></div><span class="e-name">${nameStr}</span><div class="e-mini"><div class="e-mini-fill" style="width:${barW}%;background:${vc}"></div></div><span class="e-val" style="color:${vc}">${active?v.toFixed(1):'—'}</span></div>`;
@@ -1186,9 +1177,11 @@ function updateUI(avg){
 // ══════════════════════════════════════════════════════════
 function drawGraph(){
   const cv=document.getElementById('graphCanvas'),ctx=cv.getContext('2d');
-  cv.width=cv.offsetWidth*devicePixelRatio; cv.height=cv.offsetHeight*devicePixelRatio;
-  ctx.scale(devicePixelRatio,devicePixelRatio);
-  const W=cv.offsetWidth,H=cv.offsetHeight,pL=30,pR=5,pT=4,pB=13;
+  const dpr=window.devicePixelRatio||1;
+  const W=cv.offsetWidth,H=cv.offsetHeight;
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);}
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const pL=30,pR=5,pT=4,pB=13;
   ctx.clearRect(0,0,W,H);
 
   ctx.font='8px Courier New'; ctx.textAlign='right';
@@ -1347,13 +1340,13 @@ function loadSettingsLS(){
 // ══════════════════════════════════════════════════════════
 //  GAUGE + TOPO DRAW
 // ══════════════════════════════════════════════════════════
+const _topoOff=document.createElement('canvas'); // cached offscreen topo canvas
 function drawGauge(cv, value) {
   const dpr=window.devicePixelRatio||1;
   const W=180, H=118;
-  cv.width=W*dpr; cv.height=H*dpr;
-  cv.style.width=W+'px'; cv.style.height=H+'px';
+  if(cv.width!==W*dpr||cv.height!==H*dpr){cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';}
   const ctx=cv.getContext('2d');
-  ctx.scale(dpr,dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
   const cx=W/2, cy=H-14, r=72, lw=11;
   const startA=Math.PI*1.0, sweepA=Math.PI*1.0, endA=startA+sweepA;
 
@@ -1413,10 +1406,9 @@ function drawTopo(cv) {
   if(!cv) return;
   const dpr=window.devicePixelRatio||1;
   const W=cv.parentElement?.offsetWidth||180, H=120;
-  cv.width=W*dpr; cv.height=H*dpr;
-  cv.style.width=W+'px'; cv.style.height=H+'px';
+  if(cv.width!==Math.round(W*dpr)||cv.height!==Math.round(H*dpr)){cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);cv.style.width=W+'px';cv.style.height=H+'px';}
   const ctx=cv.getContext('2d');
-  ctx.scale(dpr,dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,W,H);
   const cx=W/2, cy=H/2+2, r=Math.min(W/2,H/2)-10;
 
@@ -1426,7 +1418,8 @@ function drawTopo(cv) {
   if(activeElecs.length>1){
     // Render at low resolution then scale up (perf optimization)
     const LW=64, LH=Math.round(64*H/W);
-    const off=document.createElement('canvas'); off.width=LW; off.height=LH;
+    if(_topoOff.width!==LW||_topoOff.height!==LH){_topoOff.width=LW;_topoOff.height=LH;}
+    const off=_topoOff;
     const offCtx=off.getContext('2d');
     const img=offCtx.createImageData(LW,LH);
     const lcx=LW/2, lcy=LH/2+LH*(cy-H/2)/H, lr=r/W*LW;
