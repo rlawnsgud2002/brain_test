@@ -158,6 +158,12 @@
     #emgWarn  { color:#ff8040; }
     #tgamWarn { color:#ffcc44; }
 
+    /* ── CSV progress bar (topbar) ── */
+    #csvProgress { display:none; align-items:center; gap:5px; font-size:9px; color:#60c8a0; }
+    .csv-track { width:60px; height:3px; background:rgba(60,200,140,0.15); border-radius:2px; overflow:hidden; }
+    #csvFill { height:100%; width:0%; background:#40cc90; border-radius:2px; transition:width .2s; }
+    #csvPct { font-size:9px; min-width:26px; }
+
     /* ── Experiment bar ── */
     #expBar { display:none; position:fixed; top:34px; left:0; right:0; z-index:200; pointer-events:none; }
     #expBarInner { background:rgba(5,8,16,0.92); padding:5px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid rgba(100,140,255,0.18); }
@@ -181,6 +187,11 @@
     <span>SIG</span>
     <div class="sigq-track"><div id="sigqFill"></div></div>
     <span id="sigqPct">100%</span>
+  </div>
+  <div id="csvProgress">
+    <span>CSV</span>
+    <div class="csv-track"><div id="csvFill"></div></div>
+    <span id="csvPct">0%</span>
   </div>
   <span id="topTimer" style="font-size:9px;color:#3a5070;letter-spacing:1px;margin-left:auto">00:00</span>
   <div id="topWsRow" style="margin-left:8px">
@@ -297,6 +308,9 @@
         <option value="mental">MENTAL STATE CSV</option>
         <option value="device">EMOTIV EPOC X (LIVE)</option>
       </select>
+      <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="loadCSV(this)">
+      <button onclick="document.getElementById('csvFileInput').click()" style="margin-top:5px;background:rgba(40,180,120,0.16);border-color:rgba(40,180,120,0.32);color:#50d0a0">📂 IMPORT CSV</button>
+      <div id="csvInfoRow" style="display:none;font-size:9px;color:#40aa80;margin-top:3px;letter-spacing:.5px"></div>
     </div>
 
     <div class="panel-box">
@@ -358,6 +372,15 @@
   <div class="modal-box">
     <h3>SESSION REPORT <span class="modal-close" onclick="document.getElementById('reportModal').classList.remove('show')">✕</span></h3>
     <div id="reportSummary"></div>
+    <div id="csvValidationSection" style="display:none">
+      <div style="margin-top:11px;font-size:9px;color:#40cc90;letter-spacing:1px">CSV VALIDATION</div>
+      <div id="csvValidationContent"></div>
+      <div style="margin-top:5px;display:flex;align-items:center;gap:6px">
+        <span style="font-size:9px;color:#6480cc">dt tolerance:</span>
+        <input type="number" id="dtTolerance" min="0.1" max="5" step="0.1" value="1.0" style="width:50px;font-size:10px;background:rgba(100,140,255,0.1);border:1px solid rgba(100,140,255,0.28);color:#e0e8ff;padding:2px 4px;border-radius:3px;font-family:inherit" onchange="recalcValidation()">
+        <span style="font-size:9px;color:#6480cc">sec</span>
+      </div>
+    </div>
     <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">V-PATTERN EVENTS</div>
     <div id="reportEvents"></div>
     <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">PEAK ANALYSIS</div>
@@ -485,6 +508,7 @@
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script>
 // ══════════════════════════════════════════════════════════
 //  DEVICE PROFILES
@@ -567,7 +591,8 @@ const CFG = {
   history: [],
   vLow:false, vLowTime:0, vCooldown:0,
   dataSource:'sim', _lastVActive:false,
-  _dt:0.1, _lastStepTime:0
+  _dt:0.1, _lastStepTime:0,
+  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0
 };
 const getProf = () => DEVICE_PROFILES[CFG.activeDevice];
 const getRegs = () => getProf().regions;
@@ -748,6 +773,103 @@ function onSourceChange() {
     if(ws&&ws.readyState===WebSocket.OPEN)
       ws.send(JSON.stringify({type:'source_change',source:src}));
   }
+}
+
+// ══════════════════════════════════════════════════════════
+//  CSV IMPORT
+// ══════════════════════════════════════════════════════════
+function loadCSV(input) {
+  const file = input.files[0];
+  if (!file) return;
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true,
+    complete: function(res) {
+      const rows = res.data;
+      if (!rows.length) { showToast('CSV is empty', '#ff8040'); return; }
+      const headers = Object.keys(rows[0]);
+
+      // Detect Hz from header or use dropdown
+      let detectedHz = null;
+      const hzHeader = headers.find(h => /^(sampling_rate|hz|sample_rate|freq)$/i.test(h));
+      if (hzHeader) {
+        const v = parseFloat(rows[0][hzHeader]);
+        if (!isNaN(v) && v > 0) detectedHz = v;
+      }
+
+      // Detect numeric columns (potential channels)
+      const numCols = headers.filter(h => {
+        if (/^label$/i.test(h)) return false;
+        const v = parseFloat(rows[0][h]);
+        return !isNaN(v);
+      });
+
+      if (!numCols.length) { showToast('No numeric columns found in CSV', '#ff8040'); return; }
+
+      // Auto-detect Kaggle EEG Brainwave format
+      const isKaggle = numCols.some(c => /^mean_\d_a$/i.test(c));
+      const channelCandidates = isKaggle ? numCols.filter(c => /^mean_\d_a$/i.test(c)) : numCols;
+
+      // Ask Hz and channel
+      const hzOptions = [128, 256, 512];
+      let hzStr = detectedHz ? String(detectedHz) : prompt(
+        `Sampling rate not found in CSV.\nEnter Hz (common: 128, 256, 512):`,
+        '128'
+      );
+      const hz = Math.max(1, parseFloat(hzStr) || 128);
+
+      const chanIdx = channelCandidates.length > 1
+        ? (()=>{
+            const choice = prompt(
+              `Select channel (0-${channelCandidates.length-1}):\n${channelCandidates.map((c,i)=>`${i}: ${c}`).join('\n')}`,
+              '0'
+            );
+            const ci = parseInt(choice);
+            return (isNaN(ci)||ci<0||ci>=channelCandidates.length) ? 0 : ci;
+          })()
+        : 0;
+      const chosenCol = channelCandidates[chanIdx];
+
+      // Extract values and labels
+      const rawVals = rows.map(r => parseFloat(r[chosenCol])).filter(v => !isNaN(v));
+      if (!rawVals.length) { showToast('Selected column has no numeric data', '#ff8040'); return; }
+
+      // Normalize to 0-100 range
+      const minV = Math.min(...rawVals), maxV = Math.max(...rawVals);
+      const range = maxV - minV || 1;
+
+      // Detect label column
+      const labelCol = headers.find(h => /^label$/i.test(h));
+
+      // Build csvData
+      CFG.csvData = rows.map((r, i) => ({
+        val: ((parseFloat(r[chosenCol]) - minV) / range) * 100,
+        label: labelCol ? (r[labelCol]||'').trim().toLowerCase() : null
+      })).filter(d => !isNaN(d.val));
+
+      CFG.csvHz = hz;
+      CFG.csvChannel = chanIdx;
+
+      // Reset session state (reuse existing logic)
+      CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
+      RPT.sessionStart = Date.now(); RPT.events = []; RPT.peaks = []; RPT._lastAvg = 50; RPT._rising = false; RPT._sum = 0; RPT._count = 0;
+      CFG.vals = new Float32Array(14).fill(50);
+
+      CFG.csvIdx = 0;
+      CFG.dataSource = 'csv';
+      CFG.csvBatchMode = true;
+
+      // Update UI
+      const info = `${file.name} — ${CFG.csvData.length} rows · ${chosenCol} · ${hz}Hz`;
+      document.getElementById('csvInfoRow').textContent = info;
+      document.getElementById('csvInfoRow').style.display = 'block';
+      document.getElementById('csvProgress').style.display = 'flex';
+      document.getElementById('topSrcLabel').textContent = 'CSV';
+      showToast(info, '#40cc90');
+
+      input.value = ''; // allow re-selecting same file
+    },
+    error: function(err) { showToast('CSV parse error: ' + err.message, '#ff8040'); }
+  });
 }
 
 // ══════════════════════════════════════════════════════════
@@ -951,7 +1073,30 @@ function simStep(){
       if(CFG.cqVals[i]<0.55) CFG.cqVals[i]+=0.014;
     }
   }
-  if(CFG.dataSource!=='ws'){
+  if(CFG.dataSource==='csv' && CFG.csvData && CFG.csvData.length) {
+    const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10));
+    if(CFG.csvIdx < CFG.csvData.length) {
+      // Average chunkSize rows for this 100ms frame
+      const end = Math.min(CFG.csvIdx + chunkSize, CFG.csvData.length);
+      let sum = 0, count = 0;
+      for(let i = CFG.csvIdx; i < end; i++) { sum += CFG.csvData[i].val; count++; }
+      const chunkAvg = sum / count;
+      CFG.vals.fill(chunkAvg); // fill all channels to preserve avg integrity
+      CFG.csvIdx += chunkSize;
+
+      // Update topbar progress
+      const pct = Math.min(100, Math.round(CFG.csvIdx / CFG.csvData.length * 100));
+      document.getElementById('csvFill').style.width = pct + '%';
+      document.getElementById('csvPct').textContent = pct + '%';
+    } else {
+      // Playback complete
+      CFG.csvBatchMode = false;
+      CFG.dataSource = 'sim';
+      document.getElementById('csvProgress').style.display = 'none';
+      showReport();
+      showToast('CSV playback complete — see report for validation', '#40cc90');
+    }
+  } else if(CFG.dataSource!=='ws'){
     // Alpha rhythm slow oscillation — computed regardless of mode
     const alphaOsc=Math.sin(Date.now()/3200)*3;
     if(vPhase){
@@ -1051,10 +1196,13 @@ function beepV(){
 
 function toggleControl(concAtEvent=50){
   controlActive=!controlActive;
-  beepV();
   const evtTime=Date.now();
   const entry={t:evtTime,concAtEvent,type:controlActive?'ACTIVATED':'DEACTIVATED',peakConc:null,peakDelay:null};
   RPT.events.push(entry);
+
+  if(CFG.csvBatchMode) return; // suppress audio/popup during batch CSV playback
+
+  beepV();
   setTimeout(()=>{
     const rp=RPT.peaks.filter(p=>p.t>evtTime&&p.t<evtTime+10000);
     if(rp.length>0){const b=rp.reduce((a,x)=>x.conc>a.conc?x:a);entry.peakConc=Math.round(b.conc);entry.peakDelay=((b.t-evtTime)/1000).toFixed(1);}
@@ -1638,11 +1786,97 @@ function showReport(){
   document.getElementById('reportPeaks').innerHTML=top5.length===0
     ?'<div style="font-size:10px;color:#6480cc;padding:5px 0">No peaks yet</div>'
     :`<table class="report-table"><thead><tr><th>Time</th><th>Peak Concentration</th></tr></thead><tbody>${top5.map(p=>`<tr><td>${fmtTime(p.t)}</td><td style="color:#ffaa44">${p.conc.toFixed(1)}%</td></tr>`).join('')}</tbody></table>`;
+  // CSV validation section
+  const hasCsvLabels = CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null;
+  const csvSec = document.getElementById('csvValidationSection');
+  if(hasCsvLabels) {
+    csvSec.style.display = 'block';
+    recalcValidation();
+  } else if(CFG.csvData && CFG.csvData.length) {
+    csvSec.style.display = 'block';
+    document.getElementById('csvValidationContent').innerHTML =
+      `<div class="report-stat"><span>CSV Rows Processed</span><span>${CFG.csvData.length}</span></div>
+       <div class="report-stat"><span>V-Pattern Events</span><span>${RPT.events.length}</span></div>
+       <div style="font-size:9px;color:#4060aa;margin-top:3px">No label column — accuracy metrics unavailable</div>`;
+  } else {
+    csvSec.style.display = 'none';
+  }
+
   document.getElementById('reportModal').classList.add('show');
 }
+
+function recalcValidation() {
+  if(!CFG.csvData || !CFG.csvData.length || CFG.csvData[0].label === null) return;
+  const dt = parseFloat(document.getElementById('dtTolerance').value) || 1.0;
+  const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10));
+  const frameDur = chunkSize / CFG.csvHz; // seconds per frame
+
+  // Find label transitions: concentrated→relax
+  const transitions = [];
+  for(let i = 1; i < CFG.csvData.length; i++) {
+    const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
+    if(prev && cur && prev !== cur) {
+      const chunkIdx = Math.floor(i / chunkSize);
+      transitions.push({ tSec: chunkIdx * 0.1, from: prev, to: cur });
+    }
+  }
+
+  // V-trigger timestamps as seconds since playback start
+  const triggers = RPT.events.map(e => (e.t - RPT.sessionStart) / 1000);
+
+  // TP: each transition matched by a trigger within ±dt
+  let tp = 0;
+  const matchedTriggers = new Set();
+  for(const trans of transitions) {
+    for(let ti = 0; ti < triggers.length; ti++) {
+      if(!matchedTriggers.has(ti) && Math.abs(triggers[ti] - trans.tSec) <= dt) {
+        tp++; matchedTriggers.add(ti); break;
+      }
+    }
+  }
+  const fp = triggers.length - matchedTriggers.size;
+  const fn = transitions.length - tp;
+  const precision = triggers.length ? (tp / triggers.length) : 0;
+  const recall = transitions.length ? (tp / transitions.length) : 0;
+  const f1 = (precision + recall) > 0 ? 2 * precision * recall / (precision + recall) : 0;
+  const pct = v => (v * 100).toFixed(1) + '%';
+  const col = v => v >= 0.7 ? '#40cc90' : v >= 0.4 ? '#ffcc44' : '#ff6644';
+
+  document.getElementById('csvValidationContent').innerHTML = `
+    <div class="report-stat"><span>Label Transitions</span><span>${transitions.length}</span></div>
+    <div class="report-stat"><span>V-Pattern Triggers</span><span>${triggers.length}</span></div>
+    <div class="report-stat"><span>True Positives (TP)</span><span>${tp}</span></div>
+    <div class="report-stat"><span>False Positives (FP)</span><span>${fp}</span></div>
+    <div class="report-stat"><span>False Negatives (FN)</span><span>${fn}</span></div>
+    <div class="report-stat"><span>Precision</span><span style="color:${col(precision)}">${pct(precision)}</span></div>
+    <div class="report-stat"><span>Recall</span><span style="color:${col(recall)}">${pct(recall)}</span></div>
+    <div class="report-stat"><span>F1 Score</span><span style="color:${col(f1)};font-size:14px">${pct(f1)}</span></div>`;
+}
+
 function exportCSV(){
-  const rows=['Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)'];
-  RPT.events.forEach(e=>{const t=((e.t-RPT.sessionStart)/1000).toFixed(1);rows.push(`${t},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`);});
+  const hasCsvLabels = CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null;
+  const dt = parseFloat(document.getElementById('dtTolerance')?.value) || 1.0;
+  let labelTransitions = [];
+  if(hasCsvLabels) {
+    const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10));
+    for(let i = 1; i < CFG.csvData.length; i++) {
+      const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
+      if(prev && cur && prev !== cur) labelTransitions.push({ tSec: Math.floor(i/chunkSize)*0.1, from: prev, to: cur });
+    }
+  }
+  const header = hasCsvLabels
+    ? 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s),LabelMatch,NearestTransition(s)'
+    : 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)';
+  const rows=[header];
+  RPT.events.forEach(e=>{
+    const t=((e.t-RPT.sessionStart)/1000);
+    const base=`${t.toFixed(1)},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`;
+    if(hasCsvLabels){
+      const nearest=labelTransitions.reduce((a,b)=>Math.abs(b.tSec-t)<Math.abs(a.tSec-t)?b:a,{tSec:Infinity,from:'',to:''});
+      const matched=Math.abs(nearest.tSec-t)<=dt?'TP':'FP';
+      rows.push(`${base},${matched},${isFinite(nearest.tSec)?nearest.tSec.toFixed(1):''}`);
+    } else { rows.push(base); }
+  });
   const histRows=['SessionTime(s),Concentration(%)'];
   const histOffset=Math.max(0,(Date.now()-RPT.sessionStart)/1000-(CFG.history.length-1)*CFG._dt);
   CFG.history.forEach((v,i)=>histRows.push(`${(histOffset+i*CFG._dt).toFixed(2)},${v.toFixed(1)}`));
