@@ -642,6 +642,10 @@ function wsConnect() {
           bands.emg_warn    = d.artifacts?.emg_warn??false;
           bands.poor_signal = d.artifacts?.poor_signal??0;
         }
+        if(d.contact_quality){
+          if(!CFG.cqVals||CFG.cqVals.length<14) CFG.cqVals=new Float32Array(14).fill(0.88);
+          d.contact_quality.forEach((q,i)=>{ CFG.cqVals[i]=Math.max(0,Math.min(1,+q)); });
+        }
         if (d.vpattern?.v_active && !CFG._lastVActive) toggleControl(d.bands?.concentration??50);
         CFG._lastVActive = d.vpattern?.v_active??false;
         CFG.dataSource = 'ws';
@@ -941,9 +945,11 @@ function simStep(){
   const nch=getProf().nCh;
   // Simulate contact quality (impedance) — each electrode drifts realistically
   if(!CFG.cqVals||CFG.cqVals.length<14) CFG.cqVals=new Float32Array(14).fill(0.88);
-  for(let i=0;i<nch;i++){
-    CFG.cqVals[i]=Math.max(0.2,Math.min(1.0,CFG.cqVals[i]+(Math.random()-.48)*0.008));
-    if(CFG.cqVals[i]<0.55) CFG.cqVals[i]+=0.014;  // drift toward good contact in sim
+  if(CFG.dataSource!=='ws'){
+    for(let i=0;i<nch;i++){
+      CFG.cqVals[i]=Math.max(0.2,Math.min(1.0,CFG.cqVals[i]+(Math.random()-.48)*0.008));
+      if(CFG.cqVals[i]<0.55) CFG.cqVals[i]+=0.014;
+    }
   }
   if(CFG.dataSource!=='ws'){
     // Alpha rhythm slow oscillation — computed regardless of mode
@@ -1114,8 +1120,10 @@ function updateUI(avg){
   const el2=Math.round((Date.now()-RPT.sessionStart)/1000);
   document.getElementById('topTimer').textContent=`${String(Math.floor(el2/60)).padStart(2,'0')}:${String(el2%60).padStart(2,'0')}`;
 
-  // ENG IDX = β/(α+θ). Typical range 0.2–1.5; display 3dp
-  const ei=bands.engagement_index??(avg/100);
+  // ENG IDX = β/(α+θ). Use server value if available, else derive from band powers
+  const ei=bands.engagement_index!=null
+    ?bands.engagement_index
+    :(bands.beta||30)/Math.max(0.1,(bands.alpha||50)+(bands.theta||40));
   const eiEl=document.getElementById('baRatio');
   eiEl.textContent=(typeof ei==='number'?ei:0).toFixed(3);
   eiEl.style.color=ei>1.0?'#ff8040':ei>0.5?'#ffcc44':ei>0.25?'#40cc88':'#6480cc';
@@ -1361,6 +1369,7 @@ const _topoOff=document.createElement('canvas');
 function drawGauge(cv, value) {
   const W=180, H=118;
   const ctx=_fitCanvas(cv,W,H,true);
+  ctx.clearRect(0,0,W,H);
   const cx=W/2, cy=H-14, r=72, lw=11;
   const startA=Math.PI*1.0, sweepA=Math.PI*1.0, endA=startA+sweepA;
 
@@ -1437,12 +1446,13 @@ function drawTopo(cv) {
     for(let py=0;py<LH;py++){for(let px=0;px<LW;px++){
       const dx=px-lcx,dy=py-lcy;
       if(dx*dx+dy*dy>lr*lr) continue;
-      const nx=(px-lcx)/lr, ny=-(py-lcy)/lr;
+      // nx=lateral, ny=anterior-posterior in electrode coords (neg=frontal=top)
+      const nx=(px-lcx)/lr, ny=(py-lcy)/lr;
       let sw=0,sv=0;
       for(let k=0;k<activeElecs.length;k++){
         const ex=activeElecs[k].x,ey=activeElecs[k].y;
         const d2=(ex-nx)**2+(ey-ny)**2;
-        const w=1/(d2+0.04);
+        const w=1/(d2+0.01);
         sw+=w; sv+=w*activeVals[k];
       }
       const v=sv/sw, jc=jet(v);
@@ -1481,9 +1491,17 @@ function drawTopo(cv) {
   ctx.beginPath(); ctx.moveTo(cx-r,cy); ctx.lineTo(cx+r,cy); ctx.stroke();
   ctx.setLineDash([]);
 
-  // Electrode markers + labels
+  // Orientation labels (A=anterior/front at top, P=posterior/back at bottom)
+  ctx.font='bold 7px Courier New'; ctx.textAlign='center';
+  ctx.fillStyle='rgba(255,200,50,0.70)'; ctx.textBaseline='bottom'; ctx.fillText('A',cx,cy-r-3);
+  ctx.fillStyle='rgba(100,140,255,0.45)'; ctx.textBaseline='top';   ctx.fillText('P',cx,cy+r+3);
+  ctx.textBaseline='middle';
+  ctx.fillStyle='rgba(100,140,255,0.35)'; ctx.fillText('L',cx-r-6,cy);
+  ctx.fillStyle='rgba(100,140,255,0.35)'; ctx.fillText('R',cx+r+6,cy);
+
+  // Electrode markers + labels (y flipped: frontal=neg y → top of canvas)
   CFG.electrodes.forEach((e,i)=>{
-    const px=cx+e.x*r, py=cy-e.y*r;
+    const px=cx+e.x*r, py=cy+e.y*r;
     if(e.ref){
       ctx.beginPath(); ctx.arc(px,py,2.5,0,Math.PI*2);
       ctx.fillStyle='rgba(80,90,130,0.55)'; ctx.fill(); return;
@@ -1493,9 +1511,9 @@ function drawTopo(cv) {
     ctx.beginPath(); ctx.arc(px,py,4,0,Math.PI*2);
     ctx.fillStyle=`rgb(${rc},${gc},${bc})`; ctx.fill();
     ctx.strokeStyle='rgba(0,0,0,0.5)'; ctx.lineWidth=0.8; ctx.stroke();
-    ctx.fillStyle='rgba(220,235,255,0.80)'; ctx.font='bold 6px Courier New';
+    ctx.fillStyle='rgba(220,235,255,0.85)'; ctx.font='bold 7px Courier New';
     ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillText(e.n,px,py-4.5);
+    ctx.fillText(e.n,px,py-5);
   });
 }
 
@@ -1737,6 +1755,7 @@ function _handleExperiment(d){
 
 // ── Startup ────────────────────────────────────────────────
 (function(){
+  onDeviceChange(); // initialise panel visibility for default device
   loadSettingsLS();
   // Save session name on change
   const sn=document.getElementById('sessionName');
