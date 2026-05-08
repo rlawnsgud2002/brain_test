@@ -137,16 +137,32 @@
     /* ── V-Alert (top-right) ── */
     #vAlert {
       position:fixed; top:52px; right:14px;
-      background:rgba(8,12,24,0.94);
-      border:1px solid #6480cc; border-radius:8px;
-      padding:9px 16px; font-size:13px; font-weight:bold;
+      background:rgba(8,12,24,0.96);
+      border:2px solid #6480cc; border-radius:12px;
+      padding:16px 24px; font-size:18px; font-weight:bold;
       color:#a0c0ff; display:none; pointer-events:none;
       text-align:center; backdrop-filter:blur(14px);
-      min-width:195px; z-index:250;
+      min-width:260px; z-index:250;
+      box-shadow:0 0 32px rgba(100,140,255,0.35);
     }
     #vAlert.show { display:block; animation:vSlideIn .28s ease; }
     @keyframes vSlideIn { from{opacity:0;transform:translateX(28px)} to{opacity:1;transform:translateX(0)} }
     @keyframes vsBlink  { 0%,100%{opacity:1} 50%{opacity:.55} }
+
+    /* ── V-Pattern status bar (always visible) ── */
+    #vStatusBar {
+      position:fixed; bottom:36px; left:50%; transform:translateX(-50%);
+      background:rgba(8,12,24,0.88); border:1px solid rgba(100,140,255,0.3);
+      border-radius:8px; padding:6px 18px; display:flex; align-items:center;
+      gap:14px; pointer-events:none; z-index:200; backdrop-filter:blur(8px);
+      font-size:10px; letter-spacing:1px;
+    }
+    #vStatusBar .vsb-label { color:#3a5070; font-size:9px; }
+    #vStatusBar .vsb-val   { font-weight:bold; font-size:12px; }
+    .vsb-sep { color:rgba(100,140,255,0.2); }
+
+    /* ── Per-electrode V state ── */
+    .e-vstate { font-size:8px; font-weight:bold; min-width:28px; text-align:center; border-radius:2px; padding:1px 3px; }
 
     /* ── Tooltip ── */
     #tooltip { position:fixed; display:none; background:rgba(5,8,16,0.95); border:1px solid rgba(100,140,255,0.46); border-radius:6px; padding:5px 10px; font-size:11px; pointer-events:none; z-index:50; }
@@ -364,7 +380,23 @@
 <!-- V-Alert -->
 <div id="vAlert">
   ⚡ V-PATTERN DETECTED<br>
-  <span id="vAlertSub" style="font-size:10px;color:#6480cc">FOCUS → CONTROL TRANSFER</span>
+  <span id="vAlertSub" style="font-size:13px;color:#6480cc">FOCUS → CONTROL TRANSFER</span>
+</div>
+
+<!-- V-Pattern status bar (always visible at bottom) -->
+<div id="vStatusBar">
+  <span class="vsb-label">V-PATTERN</span>
+  <span class="vsb-sep">|</span>
+  <span class="vsb-label">PHASE</span>
+  <span class="vsb-val" id="vPhaseLabel" style="color:#3a5070">STANDBY</span>
+  <span class="vsb-sep">|</span>
+  <span class="vsb-label">thLOW</span>
+  <span class="vsb-val" id="vThLow" style="color:#6080cc">30%</span>
+  <span class="vsb-label">thHIGH</span>
+  <span class="vsb-val" id="vThHigh" style="color:#cc8060">70%</span>
+  <span class="vsb-sep">|</span>
+  <span class="vsb-label">EVENTS</span>
+  <span class="vsb-val" id="vEventCount" style="color:#40cc90">0</span>
 </div>
 
 <!-- REPORT MODAL -->
@@ -1318,6 +1350,21 @@ function updateUI(avg){
   else if(vArmed){badge.textContent='▲ RECOVERING';badge.style.cssText='background:rgba(255,160,30,.26);color:#ffaa40;animation:vsBlink .9s infinite';}
   else{const cs=cogState(avg);badge.textContent=cs.label;badge.style.cssText=`background:${cs.bg};color:${cs.col};animation:none`;}
 
+  // V-Pattern status bar update
+  const vpl=document.getElementById('vPhaseLabel');
+  if(vpl){
+    let phase='STANDBY', pcol='#3a5070';
+    if(CFG.vCooldown>0){phase='COOLDOWN';pcol='#8060cc';}
+    else if(vArmed){phase='▲ WATCH HIGH';pcol='#ffaa40';}
+    else if(CFG.vLow){phase='⚡ ARMED';pcol='#ff8040';}
+    else if(avg<CFG.thLow){phase='▼ WAIT LOW';pcol='#6090ff';}
+    else if(avg>CFG.thHigh){phase='▲ HIGH ZONE';pcol='#ff9060';}
+    vpl.textContent=phase; vpl.style.color=pcol;
+    document.getElementById('vThLow').textContent=CFG.thLow+'%';
+    document.getElementById('vThHigh').textContent=CFG.thHigh+'%';
+    document.getElementById('vEventCount').textContent=RPT.events.length;
+  }
+
   // CQ panel — throttled to ~5Hz (every other sim step)
   if(frame%DOM_THROTTLE===0) updateCQ();
 
@@ -1346,7 +1393,13 @@ function updateUI(avg){
     const dotCol=active?jetStr(v/100):'rgba(60,70,100,0.5)';
     const nameStr=e.ref?`${e.n} <span style="font-size:7px;color:#334466">REF</span>`:e.n;
     const barW=active?v.toFixed(0):'0';
-    return `<div class="e-row"><div class="e-dot" style="background:${dotCol};box-shadow:0 0 4px ${dotCol}"></div><span class="e-name">${nameStr}</span><div class="e-mini"><div class="e-mini-fill" style="width:${barW}%;background:${vc}"></div></div><span class="e-val" style="color:${vc}">${active?v.toFixed(1):'—'}</span></div>`;
+    let vTag='';
+    if(active){
+      if(v<CFG.thLow)       vTag=`<span class="e-vstate" style="background:rgba(60,100,255,0.18);color:#6090ff">▼LOW</span>`;
+      else if(v>CFG.thHigh) vTag=`<span class="e-vstate" style="background:rgba(255,100,40,0.18);color:#ff8050">▲HIGH</span>`;
+      else                  vTag=`<span class="e-vstate" style="color:#2a3a50">─MID</span>`;
+    }
+    return `<div class="e-row"><div class="e-dot" style="background:${dotCol};box-shadow:0 0 4px ${dotCol}"></div><span class="e-name">${nameStr}</span><div class="e-mini"><div class="e-mini-fill" style="width:${barW}%;background:${vc}"></div></div><span class="e-val" style="color:${vc}">${active?v.toFixed(1):'—'}</span>${vTag}</div>`;
   }).join('');
 }
 
