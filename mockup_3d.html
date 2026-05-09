@@ -149,17 +149,9 @@
     @keyframes vSlideIn { from{opacity:0;transform:translateX(28px)} to{opacity:1;transform:translateX(0)} }
     @keyframes vsBlink  { 0%,100%{opacity:1} 50%{opacity:.55} }
 
-    /* ── V-Pattern status bar (always visible) ── */
-    #vStatusBar {
-      position:fixed; bottom:36px; left:50%; transform:translateX(-50%);
-      background:rgba(8,12,24,0.88); border:1px solid rgba(100,140,255,0.3);
-      border-radius:8px; padding:6px 18px; display:flex; align-items:center;
-      gap:14px; pointer-events:none; z-index:200; backdrop-filter:blur(8px);
-      font-size:10px; letter-spacing:1px;
-    }
-    #vStatusBar .vsb-label { color:#3a5070; font-size:9px; }
-    #vStatusBar .vsb-val   { font-weight:bold; font-size:12px; }
-    .vsb-sep { color:rgba(100,140,255,0.2); }
+    /* ── V-Pattern status bar (topbar inline) ── */
+    #vStatusBar .vsb-label { color:#3a5070; font-size:8px; letter-spacing:.5px; }
+    #vStatusBar .vsb-val   { font-weight:bold; font-size:10px; }
 
     /* ── Per-electrode V state ── */
     .e-vstate { font-size:8px; font-weight:bold; min-width:28px; text-align:center; border-radius:2px; padding:1px 3px; }
@@ -210,7 +202,18 @@
     <span id="csvPct">0%</span>
   </div>
   <span id="topTimer" style="font-size:9px;color:#3a5070;letter-spacing:1px;margin-left:auto">00:00</span>
-  <div id="topWsRow" style="margin-left:8px">
+  <div id="vStatusBar" style="display:flex;align-items:center;gap:8px;margin-left:10px">
+    <span style="font-size:8px;color:#2a3850;letter-spacing:1px">V</span>
+    <span style="font-size:8px;color:#2a3850">│</span>
+    <span class="vsb-label">PHASE</span>
+    <span class="vsb-val" id="vPhaseLabel" style="color:#3a5070">STANDBY</span>
+    <span style="color:rgba(100,140,255,0.2);font-size:10px">│</span>
+    <span class="vsb-label">thL</span><span class="vsb-val" id="vThLow" style="color:#6080cc">30%</span>
+    <span class="vsb-label">thH</span><span class="vsb-val" id="vThHigh" style="color:#cc8060">70%</span>
+    <span style="color:rgba(100,140,255,0.2);font-size:10px">│</span>
+    <span class="vsb-label">EVT</span><span class="vsb-val" id="vEventCount" style="color:#40cc90">0</span>
+  </div>
+  <div id="topWsRow" style="margin-left:10px">
     <span class="ws-dot offline" id="wsDot"></span>
     <span id="wsStatusText">OFFLINE</span>
   </div>
@@ -326,6 +329,7 @@
       </select>
       <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="loadCSV(this)">
       <button onclick="document.getElementById('csvFileInput').click()" style="margin-top:5px;background:rgba(40,180,120,0.16);border-color:rgba(40,180,120,0.32);color:#50d0a0">📂 IMPORT CSV</button>
+      <button id="csvReplayBtn" onclick="replayCSV()" style="display:none;margin-top:3px;background:rgba(60,120,255,0.16);border-color:rgba(60,120,255,0.32);color:#60a0ff">↺ REPLAY CSV</button>
       <div id="csvInfoRow" style="display:none;font-size:9px;color:#40aa80;margin-top:3px;letter-spacing:.5px"></div>
     </div>
 
@@ -383,21 +387,6 @@
   <span id="vAlertSub" style="font-size:13px;color:#6480cc">FOCUS → CONTROL TRANSFER</span>
 </div>
 
-<!-- V-Pattern status bar (always visible at bottom) -->
-<div id="vStatusBar">
-  <span class="vsb-label">V-PATTERN</span>
-  <span class="vsb-sep">|</span>
-  <span class="vsb-label">PHASE</span>
-  <span class="vsb-val" id="vPhaseLabel" style="color:#3a5070">STANDBY</span>
-  <span class="vsb-sep">|</span>
-  <span class="vsb-label">thLOW</span>
-  <span class="vsb-val" id="vThLow" style="color:#6080cc">30%</span>
-  <span class="vsb-label">thHIGH</span>
-  <span class="vsb-val" id="vThHigh" style="color:#cc8060">70%</span>
-  <span class="vsb-sep">|</span>
-  <span class="vsb-label">EVENTS</span>
-  <span class="vsb-val" id="vEventCount" style="color:#40cc90">0</span>
-</div>
 
 <!-- REPORT MODAL -->
 <div class="modal" id="reportModal">
@@ -889,6 +878,8 @@ function loadCSV(input) {
       CFG.csvIdx = 0;
       CFG.dataSource = 'csv';
       CFG.csvBatchMode = true;
+      CFG.csvLastFile = file.name;
+      document.getElementById('csvReplayBtn').style.display = 'none';
 
       // Update UI
       const info = `${file.name} — ${CFG.csvData.length} rows · ${chosenCol} · ${hz}Hz`;
@@ -902,6 +893,19 @@ function loadCSV(input) {
     },
     error: function(err) { showToast('CSV parse error: ' + err.message, '#ff8040'); }
   });
+}
+
+function replayCSV() {
+  if(!CFG.csvData || !CFG.csvData.length) return;
+  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
+  RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
+  CFG.vals=new Float32Array(14).fill(50);
+  CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true;
+  document.getElementById('csvReplayBtn').style.display='none';
+  document.getElementById('csvProgress').style.display='flex';
+  document.getElementById('csvFill').style.width='0%';
+  document.getElementById('csvPct').textContent='0%';
+  document.getElementById('topSrcLabel').textContent='CSV';
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1123,12 +1127,14 @@ function simStep(){
     } else {
       // Playback complete
       CFG.csvBatchMode = false;
-      CFG.dataSource = 'sim';
+      CFG.csvLastFile = CFG.csvLastFile || 'CSV';
+      CFG.dataSource = 'csv_done';
       document.getElementById('csvProgress').style.display = 'none';
+      document.getElementById('csvReplayBtn').style.display = 'block';
       showReport();
       showToast('CSV playback complete — see report for validation', '#40cc90');
     }
-  } else if(CFG.dataSource!=='ws'){
+  } else if(CFG.dataSource!=='ws'&&CFG.dataSource!=='csv_done'){
     // Alpha rhythm slow oscillation — computed regardless of mode
     const alphaOsc=Math.sin(Date.now()/3200)*3;
     if(vPhase){
@@ -1190,17 +1196,19 @@ function simStep(){
   if(CFG.history.length>120) CFG.history.shift();
   rptTick(avg);
 
-  if(CFG.dataSource!=='ws'){
+  if(CFG.dataSource!=='ws'&&CFG.dataSource!=='csv_done'){
     if(CFG.vCooldown>0){
       CFG.vCooldown--;
     } else {
-      if(!CFG.vLow&&avg<CFG.thLow){CFG.vLow=true;CFG.vLowTime=Date.now();}
-      if(CFG.vLow&&(Date.now()-CFG.vLowTime)/1000>CFG.dt) CFG.vLow=false;
+      if(!CFG.vLow&&avg<CFG.thLow){CFG.vLow=true;CFG.vLowTime=Date.now();CFG.vLowCsvIdx=CFG.csvIdx||0;}
+      const _vElapsed=CFG.dataSource==='csv'
+        ?(CFG.csvIdx-CFG.vLowCsvIdx)/Math.max(1,CFG.csvHz)
+        :(Date.now()-CFG.vLowTime)/1000;
+      if(CFG.vLow&&_vElapsed>CFG.dt) CFG.vLow=false;
       if(CFG.vLow&&avg>CFG.thHigh){
-        const elapsed=(Date.now()-CFG.vLowTime)/1000;
         const recent=CFG.history.slice(-8);
         const slope=recent.length>3?(recent[recent.length-1]-recent[recent.length-4])/3:0;
-        if(elapsed<CFG.dt&&slope>0.3){toggleControl(avg);CFG.vCooldown=Math.round(CFG.dt*10);}
+        if(_vElapsed<CFG.dt&&slope>0.3){toggleControl(avg);CFG.vCooldown=Math.round(CFG.dt*10);}
         CFG.vLow=false;
       }
     }
@@ -1818,7 +1826,7 @@ function showReport(){
     ${snLabel}
     <div class="report-stat"><span>Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
     <div class="report-stat"><span>Device</span><span>${getProf().label}</span></div>
-    <div class="report-stat"><span>Data Source</span><span>${document.getElementById('srcSel').value.toUpperCase()}</span></div>
+    <div class="report-stat"><span>Data Source</span><span>${(CFG.dataSource==='csv'||CFG.dataSource==='csv_done')?(CFG.csvLastFile||'CSV'):document.getElementById('srcSel').value.toUpperCase()}</span></div>
     <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">CONCENTRATION</div>
     <div class="report-stat"><span>Mean ± Std Dev</span><span>${avgC}% ± ${focusStd}</span></div>
     <div class="report-stat"><span>Peak</span><span>${maxC}%</span></div>
