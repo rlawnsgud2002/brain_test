@@ -1872,11 +1872,12 @@ function recalcValidation() {
   const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10));
   const frameDur = chunkSize / CFG.csvHz; // seconds per frame
 
-  // Find label transitions: concentrated→relax
+  // Find relaxed→concentrated transitions only (V-pattern fires at LOW→HIGH crossing)
   const transitions = [];
   for(let i = 1; i < CFG.csvData.length; i++) {
     const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
-    if(prev && cur && prev !== cur) {
+    if(prev && cur && prev !== cur &&
+       prev.toLowerCase().includes('relax') && cur.toLowerCase().includes('conc')) {
       const chunkIdx = Math.floor(i / chunkSize);
       transitions.push({ tSec: chunkIdx * 0.1, from: prev, to: cur });
     }
@@ -1922,7 +1923,9 @@ function exportCSV(){
     const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10));
     for(let i = 1; i < CFG.csvData.length; i++) {
       const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
-      if(prev && cur && prev !== cur) labelTransitions.push({ tSec: Math.floor(i/chunkSize)*0.1, from: prev, to: cur });
+      if(prev && cur && prev !== cur &&
+         prev.toLowerCase().includes('relax') && cur.toLowerCase().includes('conc'))
+        labelTransitions.push({ tSec: Math.floor(i/chunkSize)*0.1, from: prev, to: cur });
     }
   }
   const header = hasCsvLabels
