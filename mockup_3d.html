@@ -11,16 +11,16 @@
 
     /* ── Topbar ── */
     #topbar {
-      position:fixed; top:0; left:0; right:0; height:34px; z-index:300;
+      position:fixed; top:0; left:0; right:0; height:38px; z-index:300;
       background:rgba(5,8,16,0.94); border-bottom:1px solid rgba(100,140,255,0.22);
       display:flex; align-items:center; gap:9px; padding:0 14px;
       pointer-events:all; backdrop-filter:blur(8px);
     }
-    .dev-tag { font-size:9px; font-weight:bold; letter-spacing:2px; padding:2px 7px; border-radius:3px; white-space:nowrap; }
+    .dev-tag { font-size:10px; font-weight:bold; letter-spacing:2px; padding:2px 7px; border-radius:3px; white-space:nowrap; }
     .dev-tag.emotiv { background:rgba(80,120,255,0.22); color:#7090ff; border:1px solid rgba(80,120,255,0.38); }
     .dev-tag.muse   { background:rgba(60,200,170,0.22); color:#3dc8a8; border:1px solid rgba(60,200,170,0.38); }
     .dev-tag.tgam   { background:rgba(200,160,40,0.22);  color:#d0a040; border:1px solid rgba(200,160,40,0.38); }
-    #topDevName  { font-size:11px; color:#a0b8e0; letter-spacing:1px; white-space:nowrap; }
+    #topDevName  { font-size:12px; color:#a0b8e0; letter-spacing:1px; white-space:nowrap; }
     #topSep      { color:rgba(100,140,255,0.28); font-size:12px; }
     #topSrcLabel { font-size:10px; color:#5070aa; letter-spacing:1px; white-space:nowrap; }
     #topSigQ     { display:none; align-items:center; gap:5px; font-size:9px; color:#6480cc; }
@@ -37,9 +37,9 @@
     #wsStatusText { font-size:10px; color:#5070aa; white-space:nowrap; }
 
     /* ── Layout ── */
-    .ui { position:fixed; top:34px; left:0; right:0; bottom:0; pointer-events:none; display:flex; }
-    .left-panel  { width:220px; padding:10px 8px 10px 10px; display:flex; flex-direction:column; gap:7px; pointer-events:all; overflow-y:auto; }
-    .right-panel { width:220px; padding:10px 10px 10px 8px; display:flex; flex-direction:column; gap:7px; pointer-events:all; overflow-y:auto; }
+    .ui { position:fixed; top:38px; left:0; right:0; bottom:0; pointer-events:none; display:flex; }
+    .left-panel  { width:260px; padding:10px 8px 10px 10px; display:flex; flex-direction:column; gap:7px; pointer-events:all; overflow-y:auto; }
+    .right-panel { width:260px; padding:10px 10px 10px 8px; display:flex; flex-direction:column; gap:7px; pointer-events:all; overflow-y:auto; }
     .center { flex:1; display:flex; flex-direction:column; justify-content:flex-end; align-items:center; padding-bottom:18px; pointer-events:none; }
 
     /* Thin custom scrollbar */
@@ -49,23 +49,23 @@
 
     /* ── Panel boxes ── */
     .panel-box { background:rgba(5,8,16,0.78); border:1px solid rgba(100,140,255,0.26); border-radius:8px; padding:10px 11px; backdrop-filter:blur(8px); }
-    .panel-title { font-size:9px; color:#6480cc; letter-spacing:2px; margin-bottom:7px; text-transform:uppercase; }
+    .panel-title { font-size:10px; color:#6480cc; letter-spacing:2px; margin-bottom:7px; text-transform:uppercase; }
     .sub-label { font-size:10px; text-align:center; color:#6480cc; margin-top:3px; letter-spacing:1px; }
-    .state-badge { text-align:center; font-size:12px; font-weight:bold; padding:5px; border-radius:4px; margin-top:6px; letter-spacing:1px; }
+    .state-badge { text-align:center; font-size:13px; font-weight:bold; padding:5px; border-radius:4px; margin-top:6px; letter-spacing:1px; }
     .metric-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
-    .metric-label { font-size:10px; color:#6480cc; }
-    .metric-val   { font-size:12px; font-weight:bold; }
+    .metric-label { font-size:11px; color:#6480cc; }
+    .metric-val   { font-size:13px; font-weight:bold; }
     .bar-bg  { background:rgba(100,140,255,0.11); border-radius:3px; height:3px; margin-top:2px; overflow:hidden; }
     .bar-fill{ height:3px; border-radius:3px; transition:width .3s; }
     canvas.mini { width:100%; height:68px; display:block; }
     .colorbar { display:flex; height:7px; border-radius:3px; margin:4px 0; background:linear-gradient(to right,#0000ff,#00ffff,#00ff00,#ffff00,#ff8000,#ff0000); }
     .colorbar-labels { display:flex; justify-content:space-between; font-size:9px; color:#5070aa; }
-    button { background:rgba(100,140,255,0.18); color:#e0e8ff; border:1px solid rgba(100,140,255,0.38); padding:6px 9px; border-radius:4px; cursor:pointer; font-size:10px; width:100%; margin-top:3px; transition:background .2s; font-family:inherit; letter-spacing:.5px; }
+    button { background:rgba(100,140,255,0.18); color:#e0e8ff; border:1px solid rgba(100,140,255,0.38); padding:7px 10px; border-radius:4px; cursor:pointer; font-size:11px; width:100%; margin-top:3px; transition:background .2s; font-family:inherit; letter-spacing:.5px; }
     button:hover { background:rgba(100,140,255,0.34); }
     .slider-row { margin-bottom:7px; }
     .slider-row label { font-size:10px; color:#6480cc; display:flex; justify-content:space-between; margin-bottom:2px; }
     input[type=range] { width:100%; accent-color:#6480cc; }
-    select { width:100%; background:rgba(5,8,16,0.92); color:#e0e8ff; border:1px solid rgba(100,140,255,0.28); padding:5px 7px; border-radius:4px; font-size:10px; font-family:inherit; }
+    select { width:100%; background:rgba(5,8,16,0.92); color:#e0e8ff; border:1px solid rgba(100,140,255,0.28); padding:6px 8px; border-radius:4px; font-size:11px; font-family:inherit; }
     select option { background:#0a0e1a; }
     .hint { position:fixed; bottom:10px; left:50%; transform:translateX(-50%); font-size:9px; color:rgba(100,140,255,0.35); pointer-events:none; letter-spacing:1px; }
     hr.sep { border:none; border-top:1px solid rgba(100,140,255,0.13); margin:7px 0; }
@@ -80,8 +80,8 @@
     /* ── Improved electrode list ── */
     .e-row { display:flex; align-items:center; gap:5px; margin-bottom:2px; }
     .e-dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
-    .e-name { font-size:10px; color:#6480cc; flex:1; }
-    .e-val { font-size:10px; font-weight:bold; min-width:36px; text-align:right; }
+    .e-name { font-size:11px; color:#6480cc; flex:1; }
+    .e-val { font-size:11px; font-weight:bold; min-width:36px; text-align:right; }
     .e-mini { flex:1; height:2px; background:rgba(100,140,255,0.1); border-radius:1px; overflow:hidden; }
     .e-mini-fill { height:100%; border-radius:1px; transition:width .3s; }
 
@@ -89,7 +89,7 @@
     .state-grid { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin-top:4px; }
     .state-cell { background:rgba(100,140,255,0.06); border:1px solid rgba(100,140,255,0.15); border-radius:5px; padding:5px 6px; text-align:center; }
     .state-cell .sc-label { font-size:8px; color:#4a6090; letter-spacing:1.5px; display:block; margin-bottom:2px; }
-    .state-cell .sc-val { font-size:14px; font-weight:bold; }
+    .state-cell .sc-val { font-size:15px; font-weight:bold; }
 
     /* ── CQ Grid ── */
     .cq-grid { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
@@ -173,7 +173,7 @@
     #csvPct { font-size:9px; min-width:26px; }
 
     /* ── Experiment bar ── */
-    #expBar { display:none; position:fixed; top:34px; left:0; right:0; z-index:200; pointer-events:none; }
+    #expBar { display:none; position:fixed; top:38px; left:0; right:0; z-index:200; pointer-events:none; }
     #expBarInner { background:rgba(5,8,16,0.92); padding:5px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid rgba(100,140,255,0.18); }
     #expInstruction { background:rgba(5,8,16,0.78); padding:3px 14px; font-size:10px; color:#80a0d0; text-align:center; border-bottom:1px solid rgba(100,140,255,0.1); }
     #expBarStop { pointer-events:all; cursor:pointer; font-size:9px; color:#ff6666; padding:2px 6px; border:1px solid rgba(255,60,60,0.3); border-radius:3px; background:rgba(255,60,60,0.1); white-space:nowrap; }
@@ -1146,10 +1146,14 @@ function simStep(){
       for(let i=0;i<nch;i++) CFG.vals[i]=CFG.manVal+(Math.random()-.5)*7;
     } else {
       // Correlated channel simulation: common component + individual noise
-      // Real EEG channels have spatial correlation via volume conduction
       const commonDrift=(Math.random()-.5)*2.8;
+      // Experiment protocol target: drift towards target concentration
+      if(CFG._expActive && CFG._expTargetConc != null) {
+        const cur = Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
+        const pull = (CFG._expTargetConc - cur) * 0.06;
+        for(let i=0;i<nch;i++) CFG.vals[i] += pull;
+      }
       for(let i=0;i<nch;i++){
-        // Spatial weight: electrodes near F/O have higher alpha coherence
         const e=CFG.electrodes[i];
         const frontal=e?e.y<-0.3:false, occipital=e?e.y>0.5:false;
         const localNoise=(Math.random()-.5)*(frontal?3.2:occipital?3.6:3.0);
@@ -1184,8 +1188,31 @@ function simStep(){
       bands.faa=Math.max(-0.5,Math.min(0.5,rawFAA+(Math.random()-.5)*0.025));
     }
     if(CFG.activeDevice==='tgam'){
-      bands.poor_signal=Math.max(0,Math.min(50,bands.poor_signal+(Math.random()-.48)*3));
-      bands.meditation=Math.max(0,Math.min(100,(bands.meditation??50)+(Math.random()-.48)*4));
+      // NeuroSky TGAM: attention updates ~1Hz with slow drift + occasional bursts
+      if(!CFG._tgamAttn) CFG._tgamAttn = 55;
+      if(!CFG._tgamMed)  CFG._tgamMed  = 45;
+      if(!CFG._tgamBurst) CFG._tgamBurst = 0;
+      // Burst mode: occasional attention spikes (focus burst)
+      if(CFG._tgamBurst > 0) {
+        CFG._tgamBurst--;
+        CFG._tgamAttn = Math.min(98, CFG._tgamAttn + 1.2);
+      } else if(Math.random() < 0.015) {
+        CFG._tgamBurst = Math.floor(15 + Math.random() * 20);
+      } else {
+        // Slow mean-reverting drift (τ ≈ 8s)
+        const target = CFG.manual ? CFG.manVal : 52;
+        CFG._tgamAttn += (target - CFG._tgamAttn) * 0.04 + (Math.random() - 0.5) * 4;
+      }
+      CFG._tgamAttn = Math.max(20, Math.min(98, CFG._tgamAttn));
+      // Meditation inversely correlated with attention
+      CFG._tgamMed += (72 - CFG._tgamAttn * 0.65 - CFG._tgamMed) * 0.06 + (Math.random() - 0.5) * 3;
+      CFG._tgamMed = Math.max(10, Math.min(95, CFG._tgamMed));
+      bands.meditation = CFG._tgamMed;
+      // Poor signal: occasional brief spike
+      if(Math.random() < 0.008) bands.poor_signal = 40 + Math.random() * 60;
+      else bands.poor_signal = Math.max(0, bands.poor_signal - 8);
+      // Map attention to vals[0]
+      CFG.vals[0] = CFG._tgamAttn;
     }
     // Engagement Index: β / (α + θ)  — real formula (Pope et al. 1995)
     const eiDenom=Math.max(0.1,(bands.alpha||50)+(bands.theta||40));
@@ -1996,21 +2023,91 @@ function _expSetRunning(running){
   document.getElementById('btnMarker').style.display =running?'inline-block':'none';
   document.getElementById('expBar').style.display    =running?'block':'none';
 }
+// Client-side experiment protocol definitions (sim mode)
+const SIM_PROTOCOLS = {
+  quick: [
+    {phase:'BASELINE', type:'baseline', dur:10, instruction:'Eyes open, sit quietly', color:'#3060b0', targetConc:50},
+    {phase:'RELAX',    type:'relax',    dur:20, instruction:'Close eyes, breathe naturally', color:'#2060b0', targetConc:20},
+    {phase:'TASK',     type:'task',     dur:30, instruction:'Focus: count backwards from 300', color:'#b04020', targetConc:80},
+    {phase:'REST',     type:'rest',     dur:10, instruction:'Rest, breathe naturally', color:'#204060', targetConc:30},
+    {phase:'TASK',     type:'task',     dur:20, instruction:'Focus: multiply numbers mentally', color:'#b04020', targetConc:82},
+  ],
+  short: [
+    {phase:'BASELINE', type:'baseline', dur:30,  instruction:'Eyes open, sit quietly', color:'#3060b0', targetConc:50},
+    {phase:'RELAX',    type:'relax',    dur:60,  instruction:'Close eyes, breathe naturally', color:'#2060b0', targetConc:18},
+    {phase:'TASK',     type:'task',     dur:90,  instruction:'Focus: serial subtraction (300−7)', color:'#b04020', targetConc:78},
+    {phase:'REST',     type:'rest',     dur:45,  instruction:'Rest, breathe naturally', color:'#204060', targetConc:28},
+    {phase:'TASK',     type:'task',     dur:90,  instruction:'Focus: mental arithmetic', color:'#b04020', targetConc:82},
+    {phase:'REST',     type:'rest',     dur:45,  instruction:'Rest, relax fully', color:'#204060', targetConc:22},
+  ],
+  standard: [
+    {phase:'BASELINE', type:'baseline', dur:60,  instruction:'Eyes open, sit quietly, no movement', color:'#3060b0', targetConc:50},
+    {phase:'RELAX',    type:'relax',    dur:120, instruction:'Close eyes, breathe slowly and naturally', color:'#2060b0', targetConc:16},
+    {phase:'TASK',     type:'task',     dur:120, instruction:'Focus: serial subtraction (1000−7)', color:'#b04020', targetConc:80},
+    {phase:'REST',     type:'rest',     dur:60,  instruction:'Rest, eyes open, breathe normally', color:'#204060', targetConc:32},
+    {phase:'TASK',     type:'task',     dur:120, instruction:'Focus: read and memorise text', color:'#b04020', targetConc:78},
+    {phase:'REST',     type:'rest',     dur:60,  instruction:'Rest, eyes closed, relax', color:'#204060', targetConc:20},
+    {phase:'TASK',     type:'task',     dur:120, instruction:'Focus: solve logic puzzles mentally', color:'#b04020', targetConc:84},
+    {phase:'REST',     type:'rest',     dur:60,  instruction:'Final rest — experiment ending soon', color:'#204060', targetConc:24},
+  ],
+};
+
 function startExperiment(){
-  if(!ws||ws.readyState!==WebSocket.OPEN){showToast('WebSocket not connected — connect to a device first.');return;}
-  EXP.active=true; EXP.markerCount=0; _expSetRunning(true);
-  ws.send(JSON.stringify({type:'exp_start',protocol:document.getElementById('expProtocolSel').value}));
+  if(ws && ws.readyState===WebSocket.OPEN){
+    EXP.active=true; EXP.markerCount=0; _expSetRunning(true);
+    ws.send(JSON.stringify({type:'exp_start',protocol:document.getElementById('expProtocolSel').value}));
+    return;
+  }
+  // Simulation mode: run protocol locally
+  const proto = SIM_PROTOCOLS[document.getElementById('expProtocolSel').value] || SIM_PROTOCOLS.quick;
+  EXP.active=true; EXP.markerCount=0; EXP._simPhaseIdx=0; EXP._simProto=proto;
+  _expSetRunning(true);
+  _runSimExpPhase();
 }
+
+function _runSimExpPhase(){
+  if(!EXP.active) return;
+  const proto=EXP._simProto, idx=EXP._simPhaseIdx;
+  if(idx >= proto.length){ _expDone(); showToast('Experiment complete','#80ffb0'); showReport(); return; }
+  const phase=proto[idx];
+  // Drive simulation target concentration
+  CFG._expTargetConc = phase.targetConc;
+  CFG._expActive = true;
+  // Update experiment bar UI (reuse _handleExperiment display logic)
+  _handleExperiment({
+    state:'running', phase:phase.phase, phase_type:phase.type,
+    instruction:phase.instruction, color:phase.color,
+    phase_idx:idx, phase_total:proto.length, transition:true,
+    remaining:phase.dur,
+  });
+  clearInterval(EXP._timerInterval);
+  let rem = phase.dur;
+  EXP._timerInterval = setInterval(()=>{
+    rem -= 0.25;
+    document.getElementById('expTimer').textContent = Math.ceil(rem)+'s';
+    document.getElementById('expProgressBar').style.width =
+      ((idx + 1 - rem/phase.dur) / proto.length * 100).toFixed(2)+'%';
+    if(rem <= 0){
+      clearInterval(EXP._timerInterval);
+      EXP._simPhaseIdx++;
+      _runSimExpPhase();
+    }
+  }, 250);
+}
+
 function stopExperiment(){
   if(ws&&ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'exp_stop'}));
+  CFG._expTargetConc = null; CFG._expActive = false;
   _expDone();
 }
 function addManualMarker(){
-  if(!EXP.active||!ws||ws.readyState!==WebSocket.OPEN)return;
+  if(!EXP.active) return;
   EXP.markerCount++;
-  ws.send(JSON.stringify({type:'exp_marker',label:`marker_${EXP.markerCount}`}));
+  if(ws&&ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'exp_marker',label:`marker_${EXP.markerCount}`}));
+  RPT.events.push({t:Date.now(), concAtEvent: CFG.history[CFG.history.length-1]||50, type:`MARKER_${EXP.markerCount}`, peakConc:null, peakDelay:null});
   const m=document.getElementById('expBarMark');
   m.style.background='rgba(255,200,50,0.4)'; setTimeout(()=>m.style.background='',300);
+  showToast(`Marker ${EXP.markerCount} placed`,'#ffcc44');
 }
 document.addEventListener('keydown',e=>{
   if(e.code==='Space'&&EXP.active&&document.activeElement.tagName!=='INPUT'){e.preventDefault();addManualMarker();return;}
