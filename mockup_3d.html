@@ -2015,7 +2015,7 @@ function _handleCalibration(d){
 // ══════════════════════════════════════════════════════════
 //  EXPERIMENT PROTOCOL
 // ══════════════════════════════════════════════════════════
-const EXP={active:false,markerCount:0,_timerInterval:null};
+const EXP={active:false,markerCount:0,_timerInterval:null,_simPhaseIdx:0,_simProto:null};
 
 function _expSetRunning(running){
   document.getElementById('btnExp').style.display    =running?'none':'inline-block';
@@ -2068,7 +2068,7 @@ function startExperiment(){
 function _runSimExpPhase(){
   if(!EXP.active) return;
   const proto=EXP._simProto, idx=EXP._simPhaseIdx;
-  if(idx >= proto.length){ _expDone(); showToast('Experiment complete','#80ffb0'); showReport(); return; }
+  if(idx >= proto.length){ CFG._expActive=false; CFG._expTargetConc=null; _expDone(); showToast('Experiment complete','#80ffb0'); showReport(); return; }
   const phase=proto[idx];
   // Drive simulation target concentration
   CFG._expTargetConc = phase.targetConc;
