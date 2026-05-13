@@ -761,7 +761,7 @@ function onDeviceChange() {
 
   if(EXP.active)_expDone();
   if(CAL.active){CAL.active=false;document.getElementById('calModal').classList.remove('show');}
-  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vCooldown=0; CFG._lastStepTime=0; frame=0;
+  CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG.csvBatchMode=false; CFG._lastStepTime=0; frame=0;
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50); CFG.cqVals=new Float32Array(14).fill(0.88);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
@@ -897,7 +897,7 @@ function loadCSV(input) {
       CFG.csvChannel = chanIdx;
 
       // Reset session state (reuse existing logic)
-      CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
+      CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vLowCsvIdx = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
       RPT.sessionStart = Date.now(); RPT.events = []; RPT.peaks = []; RPT._lastAvg = 50; RPT._rising = false; RPT._sum = 0; RPT._count = 0;
       CFG.vals = new Float32Array(14).fill(50);
 
@@ -931,6 +931,7 @@ function replayCSV() {
   CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true;
   document.getElementById('csvReplayBtn').style.display='none';
   document.getElementById('csvProgress').style.display='flex';
+  const _lbRpl=document.getElementById('csvLabelBadge'); if(_lbRpl) _lbRpl.style.display='none';
   document.getElementById('csvFill').style.width='0%';
   document.getElementById('csvPct').textContent='0%';
   document.getElementById('topSrcLabel').textContent='CSV';
@@ -1506,7 +1507,7 @@ function updateUI(avg){
   drawTopo(document.getElementById('topoCanvas'));
 
   const badge=document.getElementById('stateBadge');
-  const vArmed=CFG.vLow&&CFG.vCooldown===0&&CFG.dataSource!=='ws';
+  const vArmed=CFG.vLow&&CFG.vCooldown===0&&CFG.dataSource!=='ws'&&CFG.dataSource!=='csv_done';
   if(CFG.manual&&CFG.dataSource!=='ws'){badge.textContent=`MANUAL · ${Math.round(CFG.manVal)}%`;badge.style.cssText='background:rgba(160,100,255,.22);color:#c080ff;animation:none';}
   else if(CFG.vCooldown>0&&CFG.dataSource!=='ws'){const sec=Math.ceil(CFG.vCooldown/10);badge.textContent=`⏱ COOLDOWN ${sec}s`;badge.style.cssText='background:rgba(80,60,180,.22);color:#9080ee;animation:none';}
   else if(vArmed){badge.textContent='▲ RECOVERING';badge.style.cssText='background:rgba(255,160,30,.26);color:#ffaa40;animation:vsBlink .9s infinite';}
@@ -1524,7 +1525,7 @@ function updateUI(avg){
     vpl.textContent=phase; vpl.style.color=pcol;
     document.getElementById('vThLow').textContent=CFG.thLow+'%';
     document.getElementById('vThHigh').textContent=CFG.thHigh+'%';
-    document.getElementById('vEventCount').textContent=RPT.events.length;
+    document.getElementById('vEventCount').textContent=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').length;
   }
 
   // CQ panel — throttled to ~5Hz (every other sim step)
@@ -1596,7 +1597,7 @@ function drawGraph(){
     const startFrame = Math.max(0, endFrame - frameCount);
     let prevLabel = null, zoneStart = 0;
     const drawZone = (label, x0, x1) => {
-      if(!label) return;
+      if(label === null) return;
       const isConc = label.includes('conc');
       ctx.fillStyle = isConc ? 'rgba(40,200,100,0.07)' : 'rgba(60,100,255,0.07)';
       ctx.fillRect(x0, pT, x1-x0, H-pT-pB);
@@ -2090,10 +2091,9 @@ function showReport(){
     csvSec.style.display = 'none';
   }
 
-  // Draw mini session timeline
-  drawReportTimeline();
-
   document.getElementById('reportModal').classList.add('show');
+  // Draw mini session timeline after modal is visible so canvas clientWidth is non-zero
+  setTimeout(() => drawReportTimeline(), 0);
 }
 
 function drawReportTimeline() {
