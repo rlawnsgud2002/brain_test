@@ -897,6 +897,7 @@ function loadCSV(input) {
       CFG.csvChannel = chanIdx;
 
       // Reset session state (reuse existing logic)
+      vPhase=null;
       CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vLowCsvIdx = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
       RPT.sessionStart = Date.now(); RPT.events = []; RPT.peaks = []; RPT._lastAvg = 50; RPT._rising = false; RPT._sum = 0; RPT._count = 0;
       CFG.vals = new Float32Array(14).fill(50);
@@ -997,6 +998,7 @@ function _parseCSVText(text, filename) {
       })).filter(d => !isNaN(d.val));
 
       CFG.csvHz = hz; CFG.csvChannel = 0;
+      vPhase=null;
       CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
       RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
       CFG.vals=new Float32Array(14).fill(50);
@@ -2014,6 +2016,7 @@ function updateManual(){CFG.manVal=+document.getElementById('manSlider').value;C
 function forceV(){
   const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('FORCE'));
   if(CFG.dataSource==='ws'){showToast('Live WS mode — V-pattern forced by server only','#6080ff');if(btn){btn.style.background='rgba(60,80,255,0.22)';setTimeout(()=>btn.style.background='',600);}return;}
+  if(CFG.dataSource==='csv'||CFG.dataSource==='csv_done'){showToast('CSV mode — switch to SIMULATION first','#6080ff');return;}
   vPhase={step:0,total:60};CFG.manual=false;CFG.vLow=false;CFG.vCooldown=0;
   document.getElementById('manSlider').value=50;document.getElementById('mv').textContent='50%';
   if(btn){btn.style.background='rgba(255,200,60,0.38)';setTimeout(()=>btn.style.background='',500);}
@@ -2436,6 +2439,7 @@ document.addEventListener('keydown',e=>{
   if(e.key==='s'||e.key==='S'){if(!document.getElementById('settingsModal').classList.contains('show'))showAdmin();}
   if(e.key==='m'||e.key==='M'){
     if(CFG.dataSource==='ws'){showToast('Manual mode unavailable in live WS mode','#ff8040');return;}
+    if(CFG.dataSource==='csv'||CFG.dataSource==='csv_done'){showToast('Manual mode unavailable during CSV playback','#ff8040');return;}
     CFG.manual=!CFG.manual;
     if(CFG.manual){document.getElementById('manSlider').value=CFG.manVal;document.getElementById('mv').textContent=CFG.manVal+'%';}
     showToast(CFG.manual?`Manual mode ON · ${Math.round(CFG.manVal)}%`:'Manual mode OFF','#c080ff');
