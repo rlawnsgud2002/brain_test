@@ -414,14 +414,21 @@
   <div class="modal-box">
     <h3>SESSION REPORT <span class="modal-close" onclick="document.getElementById('reportModal').classList.remove('show')">✕</span></h3>
     <div id="reportSummary"></div>
+    <!-- Mini session timeline -->
+    <div id="reportTimelineWrap" style="display:none;margin-top:11px">
+      <div style="font-size:9px;color:#6480cc;letter-spacing:1px;margin-bottom:4px">SESSION TIMELINE</div>
+      <canvas id="reportTimeline" style="width:100%;height:56px;display:block;border-radius:4px;background:rgba(100,140,255,0.04);border:1px solid rgba(100,140,255,0.12)"></canvas>
+    </div>
     <div id="csvValidationSection" style="display:none">
       <div style="margin-top:11px;font-size:9px;color:#40cc90;letter-spacing:1px">CSV VALIDATION</div>
       <div id="csvValidationContent"></div>
-      <div style="margin-top:5px;display:flex;align-items:center;gap:6px">
+      <div style="margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
         <span style="font-size:9px;color:#6480cc">dt tolerance:</span>
         <input type="number" id="dtTolerance" min="0.1" max="5" step="0.1" value="1.0" style="width:50px;font-size:10px;background:rgba(100,140,255,0.1);border:1px solid rgba(100,140,255,0.28);color:#e0e8ff;padding:2px 4px;border-radius:3px;font-family:inherit" onchange="recalcValidation()">
         <span style="font-size:9px;color:#6480cc">sec</span>
+        <button onclick="copyF1()" style="font-size:8px;padding:2px 7px;width:auto;margin:0;background:rgba(60,200,120,0.12);border-color:rgba(60,200,120,0.28);color:#50cc90">⎘ COPY F1</button>
       </div>
+      <div id="csvSignalInfo" style="font-size:9px;color:#3a5070;margin-top:4px;letter-spacing:.5px"></div>
     </div>
     <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">V-PATTERN EVENTS</div>
     <div id="reportEvents"></div>
@@ -2064,6 +2071,13 @@ function showReport(){
   const csvSec = document.getElementById('csvValidationSection');
   if(hasCsvLabels) {
     csvSec.style.display = 'block';
+    // Signal info: duration + speed
+    const chunkSzInfo = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
+    const totalFrames = Math.ceil(CFG.csvData.length / chunkSzInfo);
+    const signalDurSec = CFG.csvData.length / CFG.csvHz;
+    const playbackSec = totalFrames * 0.1;
+    document.getElementById('csvSignalInfo').textContent =
+      `Signal: ${signalDurSec.toFixed(1)}s @ ${CFG.csvHz}Hz · Played at ${CFG.csvSpeed}× · Wall-clock: ${playbackSec.toFixed(1)}s`;
     recalcValidation();
   } else if(CFG.csvData && CFG.csvData.length) {
     csvSec.style.display = 'block';
@@ -2075,7 +2089,116 @@ function showReport(){
     csvSec.style.display = 'none';
   }
 
+  // Draw mini session timeline
+  drawReportTimeline();
+
   document.getElementById('reportModal').classList.add('show');
+}
+
+function drawReportTimeline() {
+  const hist = CFG.history;
+  if(!hist.length) return;
+  const wrap = document.getElementById('reportTimelineWrap');
+  if(wrap) wrap.style.display = 'block';
+  const cv = document.getElementById('reportTimeline');
+  if(!cv) return;
+  // Use natural rendered width; canvas pixels need to match
+  const W = cv.parentElement?.clientWidth || 456, H = 56;
+  const ctx = _fitCanvas(cv, W, H, true);
+  const pL=26, pR=4, pT=3, pB=9;
+  ctx.clearRect(0,0,W,H);
+  const span = hist.length - 1 || 1;
+
+  // CSV label background zones
+  if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done') && CFG.csvData && CFG.csvData.length && CFG.csvData[0].label) {
+    const cs = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
+    const totalFrames = Math.ceil(CFG.csvData.length / cs);
+    let prevLbl = null, zx0 = pL;
+    for(let f = 0; f <= totalFrames; f++) {
+      const row = CFG.csvData[Math.min(f * cs, CFG.csvData.length - 1)];
+      const lbl = row ? row.label : null;
+      if(lbl !== prevLbl) {
+        if(prevLbl) {
+          ctx.fillStyle = prevLbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
+          const x1 = pL + (f / totalFrames) * (W - pL - pR);
+          ctx.fillRect(zx0, pT, Math.min(x1, W-pR) - zx0, H-pT-pB);
+        }
+        zx0 = pL + (f / totalFrames) * (W - pL - pR);
+        prevLbl = lbl;
+      }
+    }
+    if(prevLbl) {
+      ctx.fillStyle = prevLbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
+      ctx.fillRect(zx0, pT, W-pR-zx0, H-pT-pB);
+    }
+  }
+
+  // Threshold lines
+  [[CFG.thLow,'rgba(80,120,255,0.5)'],[CFG.thHigh,'rgba(255,110,50,0.5)']].forEach(([th,col])=>{
+    const y=pT+(1-th/100)*(H-pT-pB);
+    ctx.strokeStyle=col; ctx.lineWidth=0.7; ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(pL,y); ctx.lineTo(W-pR,y); ctx.stroke();
+    ctx.setLineDash([]);
+  });
+
+  // Fill under curve
+  const fg=ctx.createLinearGradient(0,pT,0,H-pB);
+  fg.addColorStop(0,'rgba(64,140,255,0.14)'); fg.addColorStop(1,'rgba(64,96,200,0.01)');
+  ctx.beginPath();
+  hist.forEach((v,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.lineTo(W-pR,H-pB); ctx.lineTo(pL,H-pB); ctx.closePath();
+  ctx.fillStyle=fg; ctx.fill();
+
+  // History line
+  const lg=ctx.createLinearGradient(pL,0,W-pR,0);
+  lg.addColorStop(0,'#4060cc'); lg.addColorStop(.5,'#40cc80'); lg.addColorStop(1,'#ff8040');
+  ctx.strokeStyle=lg; ctx.lineWidth=1.5; ctx.beginPath();
+  hist.forEach((v,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  ctx.stroke();
+
+  // V-event markers — vertical dashed lines + triangle cap
+  RPT.events.forEach(ev=>{
+    const age=(Date.now()-ev.t)/1000, maxAge=span*CFG._dt;
+    if(age>maxAge) return;
+    const xi=span-age/CFG._dt;
+    if(xi<0||xi>span) return;
+    const x=pL+(xi/span)*(W-pL-pR);
+    ctx.strokeStyle='rgba(255,160,60,0.75)'; ctx.lineWidth=0.9; ctx.setLineDash([2,2]);
+    ctx.beginPath(); ctx.moveTo(x,pT); ctx.lineTo(x,H-pB); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle='rgba(255,160,60,0.9)';
+    ctx.beginPath(); ctx.moveTo(x,pT+1); ctx.lineTo(x-3,pT+7); ctx.lineTo(x+3,pT+7); ctx.fill();
+  });
+
+  // Y-axis labels
+  ctx.font='6px Courier New'; ctx.textAlign='right'; ctx.fillStyle='rgba(100,140,255,0.38)';
+  ctx.fillText('100',pL-2,pT+4); ctx.fillText('50',pL-2,pT+(H-pT-pB)/2+3); ctx.fillText('0',pL-2,H-pB);
+  // Time labels
+  ctx.textAlign='left'; ctx.fillText('0s',pL,H-1);
+  ctx.textAlign='right'; ctx.fillText(((span)*CFG._dt).toFixed(0)+'s',W-pR,H-1);
+}
+
+function copyF1() {
+  if(!CFG.csvData || !CFG.csvData.length || CFG.csvData[0].label === null) return;
+  const dt = parseFloat(document.getElementById('dtTolerance')?.value) || 1.0;
+  const cs = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
+  const transitions = [];
+  for(let i=1;i<CFG.csvData.length;i++){
+    const p=CFG.csvData[i-1].label, c=CFG.csvData[i].label;
+    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))
+      transitions.push(Math.floor(i/cs)*0.1);
+  }
+  const triggers = RPT.events.map(e=>(e.t-RPT.sessionStart)/1000);
+  let tp=0; const used=new Set();
+  transitions.forEach(ts=>{
+    for(let ti=0;ti<triggers.length;ti++){
+      if(!used.has(ti)&&Math.abs(triggers[ti]-ts)<=dt){tp++;used.add(ti);break;}
+    }
+  });
+  const fp=triggers.length-used.size, fn=transitions.length-tp;
+  const p=triggers.length?tp/triggers.length:0, r=transitions.length?tp/transitions.length:0;
+  const f1=(p+r)>0?2*p*r/(p+r):0;
+  const txt=`F1=${(f1*100).toFixed(1)}% P=${(p*100).toFixed(1)}% R=${(r*100).toFixed(1)}% TP=${tp} FP=${fp} FN=${fn} dt=${dt}s`;
+  navigator.clipboard?.writeText(txt).then(()=>showToast('F1 metrics copied','#40cc90')).catch(()=>showToast(txt,'#40cc90'));
 }
 
 function recalcValidation() {
