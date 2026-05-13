@@ -662,7 +662,10 @@ function _fitCanvas(cv,W,H,applyStyle){
 // ══════════════════════════════════════════════════════════
 const RPT = { sessionStart:Date.now(), events:[], peaks:[], _lastAvg:50, _rising:false, _sum:0, _count:0 };
 function rptTick(avg) {
-  if (RPT._rising && avg < RPT._lastAvg - 1) RPT.peaks.push({t:Date.now(),conc:RPT._lastAvg});
+  if (RPT._rising && avg < RPT._lastAvg - 1) {
+    RPT.peaks.push({t:Date.now(),conc:RPT._lastAvg});
+    if(RPT.peaks.length > 2000) RPT.peaks.shift();
+  }
   RPT._rising = avg > RPT._lastAvg;
   RPT._lastAvg = avg;
   RPT._sum += avg; RPT._count++;
@@ -1720,8 +1723,6 @@ function cogState(avg){
   const alRel=al/tot, beRel=be/tot, thRel=th/tot;
   // EI = β/(α+θ) — core engagement metric
   const ei=be/Math.max(1,al+th);
-  // FAA sign → approach vs. withdrawal tendency
-  const faa=b.faa||0;
 
   // DEEP FOCUS: very high EI + high beta relative + high avg
   if(avg>78&&ei>1.1&&beRel>0.28) return{label:'DEEP FOCUS',    col:'#ff5010',bg:'rgba(255,50,0,.32)'};
@@ -2003,8 +2004,10 @@ function checkPw(){
   else{document.getElementById('pwInput').value='';document.getElementById('pwErr').style.display='block';setTimeout(()=>document.getElementById('pwErr').style.display='none',1800);}
 }
 function updateCfg(){
-  CFG.thLow=+document.getElementById('thLow').value;
-  CFG.thHigh=+document.getElementById('thHigh').value;
+  const tl=+document.getElementById('thLow').value, th=+document.getElementById('thHigh').value;
+  if(tl>=th){showToast('LOW threshold must be below HIGH threshold','#ff8040');return;}
+  CFG.thLow=tl;
+  CFG.thHigh=th;
   CFG.dt=+document.getElementById('dtSlider').value;
   document.getElementById('tlv').textContent=CFG.thLow+'%';
   document.getElementById('thv').textContent=CFG.thHigh+'%';
