@@ -1509,7 +1509,7 @@ function updateUI(avg){
   const badge=document.getElementById('stateBadge');
   const vArmed=CFG.vLow&&CFG.vCooldown===0&&CFG.dataSource!=='ws'&&CFG.dataSource!=='csv_done';
   if(CFG.manual&&CFG.dataSource!=='ws'){badge.textContent=`MANUAL · ${Math.round(CFG.manVal)}%`;badge.style.cssText='background:rgba(160,100,255,.22);color:#c080ff;animation:none';}
-  else if(CFG.vCooldown>0&&CFG.dataSource!=='ws'){const sec=Math.ceil(CFG.vCooldown/10);badge.textContent=`⏱ COOLDOWN ${sec}s`;badge.style.cssText='background:rgba(80,60,180,.22);color:#9080ee;animation:none';}
+  else if(CFG.vCooldown>0&&CFG.dataSource!=='ws'&&CFG.dataSource!=='csv_done'){const sec=Math.ceil(CFG.vCooldown/10);badge.textContent=`⏱ COOLDOWN ${sec}s`;badge.style.cssText='background:rgba(80,60,180,.22);color:#9080ee;animation:none';}
   else if(vArmed){badge.textContent='▲ RECOVERING';badge.style.cssText='background:rgba(255,160,30,.26);color:#ffaa40;animation:vsBlink .9s infinite';}
   else{const cs=cogState(avg);badge.textContent=cs.label;badge.style.cssText=`background:${cs.bg};color:${cs.col};animation:none`;}
 
@@ -1517,7 +1517,8 @@ function updateUI(avg){
   const vpl=document.getElementById('vPhaseLabel');
   if(vpl){
     let phase='STANDBY', pcol='#3a5070';
-    if(CFG.vCooldown>0){phase='COOLDOWN';pcol='#8060cc';}
+    if(CFG.dataSource==='csv_done'){phase='DONE';pcol='#40cc90';}
+    else if(CFG.vCooldown>0){phase='COOLDOWN';pcol='#8060cc';}
     else if(vArmed){phase='▲ WATCH HIGH';pcol='#ffaa40';}
     else if(CFG.vLow){phase='⚡ ARMED';pcol='#ff8040';}
     else if(avg<CFG.thLow){phase='▼ WAIT LOW';pcol='#6090ff';}
