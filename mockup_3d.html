@@ -2034,7 +2034,8 @@ function showReport(){
   const cqArr=Array.from(CFG.cqVals||[]).slice(0,getProf().nCh);
   const avgCQ=cqArr.length?(cqArr.reduce((s,v)=>s+v,0)/cqArr.length*100).toFixed(0):'-';
   const focusStd=hist.length>5?Math.sqrt(hist.reduce((s,v)=>s+(v-(+avgC))**2,0)/hist.length).toFixed(1):'-';
-  const vRate=dur>60?(RPT.events.length/(dur/60)).toFixed(2)+'/min':'N/A';
+  const vEvents=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
+  const vRate=dur>60?(vEvents.length/(dur/60)).toFixed(2)+'/min':'N/A';
   // Band power at end of session
   const bkFinal=BANDS;
   const bkTot=bkFinal.reduce((s,k)=>s+Math.max(0,bands[k]||0),0)||1;
@@ -2055,7 +2056,7 @@ function showReport(){
     <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">BAND POWER (relative %)</div>
     <table class="report-table" style="margin-bottom:6px"><thead><tr><th>δ</th><th>θ</th><th>α</th><th>β</th><th>γ</th></tr></thead><tbody><tr>${bandRow}</tr></tbody></table>
     <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">V-PATTERN</div>
-    <div class="report-stat"><span>Events</span><span>${RPT.events.length}</span></div>
+    <div class="report-stat"><span>Events</span><span>${vEvents.length}</span></div>
     <div class="report-stat"><span>Rate</span><span>${vRate}</span></div>
     <div class="report-stat"><span>Avg Peak Delay</span><span>${avgDelay}</span></div>
     <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">SIGNAL QUALITY</div>
