@@ -200,7 +200,9 @@
     <span>CSV</span>
     <div class="csv-track"><div id="csvFill"></div></div>
     <span id="csvPct">0%</span>
+    <span id="csvEta" style="font-size:8px;color:#3a5070;margin-left:2px"></span>
   </div>
+  <span id="csvLabelBadge" style="display:none;font-size:9px;padding:1px 7px;border-radius:3px;letter-spacing:1px;margin-left:2px"></span>
   <span id="topTimer" style="font-size:9px;color:#3a5070;letter-spacing:1px;margin-left:auto">00:00</span>
   <div id="vStatusBar" style="display:flex;align-items:center;gap:8px;margin-left:10px">
     <span style="font-size:8px;color:#2a3850;letter-spacing:1px">V</span>
@@ -329,9 +331,11 @@
       </select>
       <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="loadCSV(this)">
       <button onclick="document.getElementById('csvFileInput').click()" style="margin-top:5px;background:rgba(40,180,120,0.16);border-color:rgba(40,180,120,0.32);color:#50d0a0">📂 IMPORT CSV</button>
+      <!-- DEMO one-click -->
+      <button id="demoBtn" onclick="loadDemoMode()" style="margin-top:5px;background:rgba(255,150,30,0.18);border-color:rgba(255,150,30,0.38);color:#ffaa40;font-weight:bold;letter-spacing:1px">⚡ DEMO (Sub-B · 5×)</button>
       <!-- Pre-loaded datasets -->
       <div style="margin-top:5px;font-size:8px;color:#3a5070;letter-spacing:1px;margin-bottom:3px">BUILT-IN DATASETS</div>
-      <div style="display:flex;gap:3px;flex-wrap:wrap">
+      <div id="presetBtns" style="display:flex;gap:3px;flex-wrap:wrap">
         <button onclick="loadCSVFromUrl('eeg_subjectb.csv','Subject B')" style="flex:1;font-size:8px;padding:3px 2px;background:rgba(60,120,255,0.14);border-color:rgba(60,120,255,0.3);color:#70a8ff" title="Best V-pattern separation (Cohen d=12.4)">SUB-B</button>
         <button onclick="loadCSVFromUrl('eeg_subjecta.csv','Subject A')" style="flex:1;font-size:8px;padding:3px 2px;background:rgba(80,100,200,0.14);border-color:rgba(80,100,200,0.3);color:#90a8ee" title="Cohen d=5.1">SUB-A</button>
         <button onclick="loadCSVFromUrl('eeg_brainwave_real.csv','Combined')" style="flex:1;font-size:8px;padding:3px 2px;background:rgba(40,80,160,0.14);border-color:rgba(40,80,160,0.3);color:#6080cc" title="A+B combined (486 rows)">A+B</button>
@@ -931,12 +935,22 @@ function replayCSV() {
 // ══════════════════════════════════════════════════════════
 const _CSV_BASE = 'https://raw.githubusercontent.com/rlawnsgud2002/brain_test/claude/continue-previous-work-eG6OC/';
 
+function loadDemoMode() {
+  const sel = document.getElementById('csvSpeedSel');
+  if(sel) sel.value = '5';
+  CFG.csvSpeed = 5;
+  loadCSVFromUrl('eeg_subjectb.csv', 'Demo: Subject B');
+}
+
 function loadCSVFromUrl(filename, label) {
+  const btns = document.querySelectorAll('#presetBtns button, #demoBtn');
+  btns.forEach(b => { b.disabled = true; b.style.opacity = '0.45'; });
   showToast(`Loading ${label}…`, '#6080cc');
   fetch(_CSV_BASE + filename)
     .then(r => { if(!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
     .then(text => _parseCSVText(text, filename))
-    .catch(err => showToast('Fetch failed: ' + err.message, '#ff8040'));
+    .catch(err => showToast('Fetch failed: ' + err.message, '#ff8040'))
+    .finally(() => btns.forEach(b => { b.disabled = false; b.style.opacity = ''; }));
 }
 
 function _parseCSVText(text, filename) {
@@ -1208,10 +1222,23 @@ function simStep(){
       CFG.vals.fill(chunkAvg); // fill all channels to preserve avg integrity
       CFG.csvIdx += chunkSize;
 
-      // Update topbar progress
+      // Update topbar progress + ETA + label badge
       const pct = Math.min(100, Math.round(CFG.csvIdx / CFG.csvData.length * 100));
       document.getElementById('csvFill').style.width = pct + '%';
       document.getElementById('csvPct').textContent = pct + '%';
+      const framesLeft = Math.ceil((CFG.csvData.length - CFG.csvIdx) / chunkSize);
+      const etaSec = Math.ceil(framesLeft * 0.1);
+      const etaEl = document.getElementById('csvEta');
+      if(etaEl) etaEl.textContent = etaSec > 0 ? etaSec + 's' : '';
+      // Current label badge
+      const curRow = CFG.csvData[Math.min(CFG.csvIdx, CFG.csvData.length - 1)];
+      const lbEl = document.getElementById('csvLabelBadge');
+      if(lbEl && curRow && curRow.label) {
+        const isConc = curRow.label.includes('conc');
+        lbEl.style.display = 'inline';
+        lbEl.textContent = isConc ? 'CONC' : 'RELAX';
+        lbEl.style.cssText = `display:inline;font-size:9px;padding:1px 7px;border-radius:3px;letter-spacing:1px;margin-left:2px;background:${isConc?'rgba(40,200,100,0.18)':'rgba(60,100,255,0.18)'};color:${isConc?'#50dd90':'#70a8ff'}`;
+      } else if(lbEl) { lbEl.style.display = 'none'; }
     } else {
       // Playback complete
       CFG.csvBatchMode = false;
@@ -1219,6 +1246,10 @@ function simStep(){
       CFG.dataSource = 'csv_done';
       document.getElementById('csvProgress').style.display = 'none';
       document.getElementById('csvReplayBtn').style.display = 'block';
+      const lbElDone = document.getElementById('csvLabelBadge');
+      if(lbElDone) lbElDone.style.display = 'none';
+      const etaElDone = document.getElementById('csvEta');
+      if(etaElDone) etaElDone.textContent = '';
       showReport();
       showToast('CSV playback complete — see report for validation', '#40cc90');
     }
