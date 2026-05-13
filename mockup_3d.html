@@ -796,8 +796,7 @@ function onDeviceChange() {
 
   document.getElementById('hemiPanel').style.display      =prof.showHemi ?'':'none';
   document.getElementById('faaRow').style.display         =prof.showFAA?'block':'none';
-  document.getElementById('meditRow').style.display       ='none';
-  document.getElementById('sigqRow').style.display        ='none';
+  document.getElementById('sigqRow').style.display        =prof.showSigQ?'block':'none';
   document.getElementById('faaCell').style.display        =prof.showFAA  ?'':'none';
   document.getElementById('meditCell').style.display      =prof.showMedit?'':'none';
   document.getElementById('sigqCell').style.display       =prof.showSigQ ?'':'none';
@@ -1183,7 +1182,9 @@ window.addEventListener('mousemove',e=>{
   const {meshes,elecs}=_tooltipTargets();
   const hits=raycaster.intersectObjects(meshes);
   if(hits.length>0){
-    const idx=meshes.indexOf(hits[0].object),elec=elecs[idx],v=CFG.vals[idx];
+    const idx=meshes.indexOf(hits[0].object);
+    if(idx<0){tooltip.style.display='none';return;}
+    const elec=elecs[idx],v=CFG.vals[idx];
     const regionName=(getProf().regions.find(r=>r.idxs.includes(idx))?.name)||'—';
     const kO=toKOhm(CFG.cqVals?.[idx]??0.85);
     const col=cqColor(kO), cqStr=kO<10?`${kO}kΩ`:`${Math.round(kO)}kΩ`;
@@ -2109,27 +2110,32 @@ function drawReportTimeline() {
   ctx.clearRect(0,0,W,H);
   const span = hist.length - 1 || 1;
 
-  // CSV label background zones
-  if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done') && CFG.csvData && CFG.csvData.length && CFG.csvData[0].label) {
+  // CSV label background zones — aligned to the same history window shown by the line
+  if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done') && CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null) {
     const cs = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
-    const totalFrames = Math.ceil(CFG.csvData.length / cs);
-    let prevLbl = null, zx0 = pL;
-    for(let f = 0; f <= totalFrames; f++) {
+    const endFrame = Math.ceil(CFG.csvIdx / cs); // last played frame
+    const startFrame = Math.max(0, endFrame - hist.length); // first visible frame
+    let prevLbl = null, zoneStart = startFrame;
+    const drawZoneRpt = (lbl, x0, x1) => {
+      if(lbl === null) return;
+      ctx.fillStyle = lbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
+      ctx.fillRect(Math.max(pL, x0), pT, Math.min(W-pR, x1) - Math.max(pL, x0), H-pT-pB);
+    };
+    for(let f = startFrame; f <= endFrame; f++) {
       const row = CFG.csvData[Math.min(f * cs, CFG.csvData.length - 1)];
       const lbl = row ? row.label : null;
       if(lbl !== prevLbl) {
-        if(prevLbl) {
-          ctx.fillStyle = prevLbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
-          const x1 = pL + (f / totalFrames) * (W - pL - pR);
-          ctx.fillRect(zx0, pT, Math.min(x1, W-pR) - zx0, H-pT-pB);
+        if(prevLbl !== null) {
+          const x0 = pL + ((zoneStart - startFrame) / span) * (W - pL - pR);
+          const x1 = pL + ((f - startFrame) / span) * (W - pL - pR);
+          drawZoneRpt(prevLbl, x0, x1);
         }
-        zx0 = pL + (f / totalFrames) * (W - pL - pR);
-        prevLbl = lbl;
+        zoneStart = f; prevLbl = lbl;
       }
     }
-    if(prevLbl) {
-      ctx.fillStyle = prevLbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
-      ctx.fillRect(zx0, pT, W-pR-zx0, H-pT-pB);
+    if(prevLbl !== null) {
+      const x0 = pL + ((zoneStart - startFrame) / span) * (W - pL - pR);
+      drawZoneRpt(prevLbl, x0, W - pR);
     }
   }
 
