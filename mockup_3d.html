@@ -1663,6 +1663,32 @@ function drawGraph(){
     ctx.beginPath(); ctx.moveTo(x,pT); ctx.lineTo(x,H-pB); ctx.stroke(); ctx.setLineDash([]);
   });
 
+  // CSV label transition markers (small triangles at the bottom of the graph)
+  if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done') && CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null) {
+    const cs2 = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
+    const ef2 = Math.ceil(CFG.csvIdx / cs2);
+    const sf2 = Math.max(0, ef2 - hist.length);
+    const span = hist.length - 1 || 1;
+    for(let i = 1; i < CFG.csvData.length; i++) {
+      const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
+      if(!prev || !cur || prev === cur) continue;
+      const fi = Math.floor(i / cs2);
+      if(fi < sf2 || fi > ef2) continue;
+      const x = pL + ((fi - sf2) / span) * (W - pL - pR);
+      if(x < pL || x > W - pR) continue;
+      const toConc = cur.includes('conc');
+      // Triangle pointing up (→conc) or down (→relax)
+      ctx.fillStyle = toConc ? 'rgba(60,220,120,0.85)' : 'rgba(80,130,255,0.85)';
+      ctx.beginPath();
+      if(toConc) {
+        ctx.moveTo(x, H-pB-1); ctx.lineTo(x-4, H-pB-8); ctx.lineTo(x+4, H-pB-8);
+      } else {
+        ctx.moveTo(x, H-pB-8); ctx.lineTo(x-4, H-pB-1); ctx.lineTo(x+4, H-pB-1);
+      }
+      ctx.closePath(); ctx.fill();
+    }
+  }
+
   // CSV label legend (top-right corner when playing CSV with labels)
   if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done') && CFG.csvData && CFG.csvData[0] && CFG.csvData[0].label !== null) {
     ctx.font='6px Courier New'; ctx.textAlign='right';
