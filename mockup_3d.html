@@ -2193,7 +2193,7 @@ function copyF1() {
     if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))
       transitions.push(Math.floor(i/cs)*0.1);
   }
-  const triggers = RPT.events.map(e=>(e.t-RPT.sessionStart)/1000);
+  const triggers = RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').map(e=>(e.t-RPT.sessionStart)/1000);
   let tp=0; const used=new Set();
   transitions.forEach(ts=>{
     for(let ti=0;ti<triggers.length;ti++){
@@ -2225,8 +2225,8 @@ function recalcValidation() {
     }
   }
 
-  // V-trigger timestamps as seconds since playback start
-  const triggers = RPT.events.map(e => (e.t - RPT.sessionStart) / 1000);
+  // V-trigger timestamps as seconds since playback start (ACTIVATED/DEACTIVATED only; exclude MARKER_N)
+  const triggers = RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').map(e => (e.t - RPT.sessionStart) / 1000);
 
   // TP: each transition matched by a trigger within ±dt
   let tp = 0;
@@ -2274,7 +2274,7 @@ function exportCSV(){
     ? 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s),LabelMatch,NearestTransition(s)'
     : 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)';
   const rows=[header];
-  RPT.events.forEach(e=>{
+  RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').forEach(e=>{
     const t=((e.t-RPT.sessionStart)/1000);
     const base=`${t.toFixed(1)},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`;
     if(hasCsvLabels){
