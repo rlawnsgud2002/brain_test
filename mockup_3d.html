@@ -351,6 +351,10 @@
         </select>
       </div>
       <button id="csvReplayBtn" onclick="replayCSV()" style="display:none;margin-top:3px;background:rgba(60,120,255,0.16);border-color:rgba(60,120,255,0.32);color:#60a0ff">↺ REPLAY CSV</button>
+      <div id="autoTuneRow" style="display:none;margin-top:5px">
+        <button onclick="autoTuneParams()" style="background:rgba(40,200,100,0.16);border-color:rgba(40,200,100,0.32);color:#40cc90;font-size:9px;letter-spacing:.5px">⚡ AUTO-TUNE FROM LABELS</button>
+        <div id="autoTuneSummary" style="font-size:8px;color:#3a6050;margin-top:2px;letter-spacing:.3px"></div>
+      </div>
       <div id="csvInfoRow" style="display:none;font-size:9px;color:#40aa80;margin-top:3px;letter-spacing:.5px"></div>
     </div>
 
@@ -641,7 +645,7 @@ const CFG = {
   vLow:false, vLowTime:0, vCooldown:0,
   dataSource:'sim', _lastVActive:false,
   _dt:0.1, _lastStepTime:0,
-  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0, csvSpeed: 5, vLowCsvIdx: 0
+  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0, csvSpeed: 5, vLowCsvIdx: 0, csvCols: 1
 };
 const getProf = () => DEVICE_PROFILES[CFG.activeDevice];
 const getRegs = () => getProf().regions;
@@ -765,6 +769,7 @@ function onDeviceChange() {
   if(EXP.active)_expDone();
   if(CAL.active){CAL.active=false;document.getElementById('calModal').classList.remove('show');}
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG.csvBatchMode=false; CFG._lastStepTime=0; frame=0;
+  const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display='none';
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50); CFG.cqVals=new Float32Array(14).fill(0.88);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
@@ -877,27 +882,30 @@ function loadCSV(input) {
             return (isNaN(ci)||ci<0||ci>=channelCandidates.length) ? 0 : ci;
           })()
         : 0;
-      const chosenCol = channelCandidates[chanIdx];
-
-      // Extract values and labels
-      const rawVals = rows.map(r => parseFloat(r[chosenCol])).filter(v => !isNaN(v));
-      if (!rawVals.length) { showToast('Selected column has no numeric data', '#ff8040'); return; }
-
-      // Normalize to 0-100 range
-      const minV = Math.min(...rawVals), maxV = Math.max(...rawVals);
-      const range = maxV - minV || 1;
-
       // Detect label column
       const labelCol = headers.find(h => /^label$/i.test(h));
 
-      // Build csvData
-      CFG.csvData = rows.map((r, i) => ({
-        val: ((parseFloat(r[chosenCol]) - minV) / range) * 100,
-        label: labelCol ? (r[labelCol]||'').trim().toLowerCase() : null
-      })).filter(d => !isNaN(d.val));
+      // Per-column min/max normalization for all selected channels
+      const colStats = numCols.map(col => {
+        const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+        const mn = Math.min(...vs), mx = Math.max(...vs);
+        return { col, mn, rng: mx - mn || 1 };
+      });
+      if (!colStats.length) { showToast('No numeric columns found', '#ff8040'); return; }
+
+      CFG.csvData = rows.map(r => {
+        const normVals = colStats.map(({col,mn,rng}) => {
+          const v = parseFloat(r[col]); return isNaN(v) ? 50 : ((v-mn)/rng)*100;
+        });
+        return {
+          val: normVals.reduce((a,b)=>a+b,0)/normVals.length,
+          vals: normVals,
+          label: labelCol ? (r[labelCol]||'').trim().toLowerCase() : null
+        };
+      }).filter(d => !isNaN(d.val));
 
       CFG.csvHz = hz;
-      CFG.csvChannel = chanIdx;
+      CFG.csvChannel = 0; CFG.csvCols = colStats.length;
 
       // Reset session state (reuse existing logic)
       vPhase=null;
@@ -910,9 +918,10 @@ function loadCSV(input) {
       CFG.csvBatchMode = true;
       CFG.csvLastFile = file.name;
       document.getElementById('csvReplayBtn').style.display = 'none';
+      const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display=labelCol?'block':'none';
 
       // Update UI
-      const info = `${file.name} — ${CFG.csvData.length} rows · ${chosenCol} · ${hz}Hz`;
+      const info = `${file.name} — ${CFG.csvData.length} rows · ${colStats.length}ch · ${hz}Hz`;
       document.getElementById('csvInfoRow').textContent = info;
       document.getElementById('csvInfoRow').style.display = 'block';
       document.getElementById('csvProgress').style.display = 'flex';
@@ -939,6 +948,34 @@ function replayCSV() {
   document.getElementById('csvFill').style.width='0%';
   document.getElementById('csvPct').textContent='0%';
   document.getElementById('topSrcLabel').textContent='CSV';
+}
+
+function autoTuneParams() {
+  if(!CFG.csvData||!CFG.csvData.length||CFG.csvData[0].label===null){showToast('Load a labeled CSV first','#ff8040');return;}
+  const relaxVals=CFG.csvData.filter(d=>d.label&&d.label.includes('relax')).map(d=>d.val);
+  const concVals =CFG.csvData.filter(d=>d.label&&d.label.includes('conc')).map(d=>d.val);
+  if(!relaxVals.length||!concVals.length){showToast('Need both relax and conc labels','#ff8040');return;}
+  const relaxMean=relaxVals.reduce((a,b)=>a+b,0)/relaxVals.length;
+  const concMean =concVals.reduce((a,b)=>a+b,0)/concVals.length;
+  if(Math.abs(concMean-relaxMean)<5){showToast('Label separation too small to auto-tune','#ff8040');return;}
+  const lo=Math.min(relaxMean,concMean),rng=Math.abs(concMean-relaxMean);
+  const newLow =Math.max(5, Math.min(45,Math.round(lo+rng*0.33)));
+  const newHigh=Math.max(55,Math.min(95,Math.round(lo+rng*0.67)));
+  let nTrans=0;
+  for(let i=1;i<CFG.csvData.length;i++){const p=CFG.csvData[i-1].label,c=CFG.csvData[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))nTrans++;}
+  const avgSegSec=CFG.csvData.length/CFG.csvHz/Math.max(1,nTrans*2);
+  const newDt=Math.min(30,Math.max(5,Math.round(avgSegSec*0.7)));
+  CFG.thLow=newLow;CFG.thHigh=newHigh;CFG.dt=newDt;
+  const tlEl=document.getElementById('thLow'),thEl=document.getElementById('thHigh'),dtEl=document.getElementById('dtSlider');
+  if(tlEl)tlEl.value=newLow; if(thEl)thEl.value=newHigh; if(dtEl)dtEl.value=newDt;
+  document.getElementById('tlv').textContent=newLow+'%';
+  document.getElementById('thv').textContent=newHigh+'%';
+  document.getElementById('dtv').textContent=newDt+'s';
+  if(ws&&ws.readyState===WebSocket.OPEN)ws.send(JSON.stringify({type:'settings',settings:{thLow:newLow,thHigh:newHigh,dt:newDt}}));
+  saveSettingsLS();
+  const sum=document.getElementById('autoTuneSummary');
+  if(sum)sum.textContent=`RELAX≈${relaxMean.toFixed(0)}% CONC≈${concMean.toFixed(0)}% → Low=${newLow}% High=${newHigh}% dt=${newDt}s`;
+  showToast(`Auto-tuned: thLow=${newLow}% thHigh=${newHigh}% dt=${newDt}s`,'#40cc90');
 }
 
 // ══════════════════════════════════════════════════════════
@@ -987,20 +1024,29 @@ function _parseCSVText(text, filename) {
 
       const isKaggle = numCols.some(c => /^mean_\d_a$/i.test(c));
       const chCands = isKaggle ? numCols.filter(c => /^mean_\d_a$/i.test(c)) : numCols;
-      const chosenCol = chCands[0]; // auto-select first channel
 
-      const rawVals = rows.map(r => parseFloat(r[chosenCol])).filter(v => !isNaN(v));
-      if (!rawVals.length) { showToast('No data in selected column', '#ff8040'); return; }
-
-      const minV = Math.min(...rawVals), maxV = Math.max(...rawVals), range = maxV - minV || 1;
       const labelCol = headers.find(h => /^label$/i.test(h));
 
-      CFG.csvData = rows.map(r => ({
-        val: ((parseFloat(r[chosenCol]) - minV) / range) * 100,
-        label: labelCol ? (r[labelCol]||'').trim().toLowerCase() : null
-      })).filter(d => !isNaN(d.val));
+      // Per-column min/max normalization
+      const colStats = chCands.map(col => {
+        const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+        const mn = Math.min(...vs), mx = Math.max(...vs);
+        return { col, mn, rng: mx - mn || 1 };
+      });
+      if (!colStats.length) { showToast('No numeric columns found', '#ff8040'); return; }
 
-      CFG.csvHz = hz; CFG.csvChannel = 0;
+      CFG.csvData = rows.map(r => {
+        const normVals = colStats.map(({col,mn,rng}) => {
+          const v = parseFloat(r[col]); return isNaN(v) ? 50 : ((v-mn)/rng)*100;
+        });
+        return {
+          val: normVals.reduce((a,b)=>a+b,0)/normVals.length,
+          vals: normVals,
+          label: labelCol ? (r[labelCol]||'').trim().toLowerCase() : null
+        };
+      }).filter(d => !isNaN(d.val));
+
+      CFG.csvHz = hz; CFG.csvChannel = 0; CFG.csvCols = colStats.length;
       vPhase=null;
       CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
       RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
@@ -1009,7 +1055,8 @@ function _parseCSVText(text, filename) {
       CFG.csvLastFile=filename;
 
       document.getElementById('csvReplayBtn').style.display='none';
-      const info = `${filename} — ${CFG.csvData.length} rows · ${chosenCol} · ${hz}Hz`;
+      const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display=labelCol?'block':'none';
+      const info = `${filename} — ${CFG.csvData.length} rows · ${colStats.length}ch · ${hz}Hz`;
       document.getElementById('csvInfoRow').textContent=info;
       document.getElementById('csvInfoRow').style.display='block';
       document.getElementById('csvProgress').style.display='flex';
@@ -1230,10 +1277,19 @@ function simStep(){
     if(CFG.csvIdx < CFG.csvData.length) {
       // Average chunkSize rows for this 100ms frame
       const end = Math.min(CFG.csvIdx + chunkSize, CFG.csvData.length);
+      const csvCols = CFG.csvCols || 1;
       let sum = 0, count = 0;
-      for(let i = CFG.csvIdx; i < end; i++) { sum += CFG.csvData[i].val; count++; }
+      const colSums = new Float32Array(csvCols);
+      for(let i = CFG.csvIdx; i < end; i++) {
+        const d = CFG.csvData[i]; sum += d.val; count++;
+        if(d.vals) for(let c=0;c<csvCols;c++) colSums[c]+=d.vals[c];
+      }
       const chunkAvg = sum / count;
-      CFG.vals.fill(chunkAvg); // fill all channels to preserve avg integrity
+      if(csvCols > 1 && CFG.csvData[CFG.csvIdx]?.vals) {
+        for(let ch=0;ch<nch;ch++) CFG.vals[ch]=colSums[ch%csvCols]/count;
+      } else {
+        CFG.vals.fill(chunkAvg);
+      }
       CFG.csvIdx += chunkSize;
 
       // Update topbar progress + ETA + label badge
