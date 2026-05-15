@@ -862,33 +862,20 @@ function loadCSV(input) {
 
       if (!numCols.length) { showToast('No numeric columns found in CSV', '#ff8040'); return; }
 
-      // Auto-detect Kaggle EEG Brainwave format
+      // For Kaggle format, restrict to EEG channel columns only
       const isKaggle = numCols.some(c => /^mean_\d_a$/i.test(c));
-      const channelCandidates = isKaggle ? numCols.filter(c => /^mean_\d_a$/i.test(c)) : numCols;
+      const colsToUse = isKaggle ? numCols.filter(c => /^mean_\d_a$/i.test(c)) : numCols;
 
-      let hzStr = detectedHz ? String(detectedHz) : prompt(
-        `Sampling rate not found in CSV.\nEnter Hz (common: 128, 256, 512):`,
-        '128'
-      );
-      const hz = Math.max(1, parseFloat(hzStr) || 128);
+      const hz = detectedHz || 128;
+      if(!detectedHz) showToast(`Hz not found in CSV — defaulting to 128Hz`, '#ffcc44');
 
-      const chanIdx = channelCandidates.length > 1
-        ? (()=>{
-            const choice = prompt(
-              `Select channel (0-${channelCandidates.length-1}):\n${channelCandidates.map((c,i)=>`${i}: ${c}`).join('\n')}`,
-              '0'
-            );
-            const ci = parseInt(choice);
-            return (isNaN(ci)||ci<0||ci>=channelCandidates.length) ? 0 : ci;
-          })()
-        : 0;
       // Detect label column
       const labelCol = headers.find(h => /^label$/i.test(h));
 
       // Per-column min/max normalization for all selected channels
-      const colStats = numCols.map(col => {
+      const colStats = colsToUse.map(col => {
         const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-        const mn = Math.min(...vs), mx = Math.max(...vs);
+        let mn=vs[0], mx=vs[0]; for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}
         return { col, mn, rng: mx - mn || 1 };
       });
       if (!colStats.length) { showToast('No numeric columns found', '#ff8040'); return; }
@@ -919,6 +906,7 @@ function loadCSV(input) {
       CFG.csvLastFile = file.name;
       document.getElementById('csvReplayBtn').style.display = 'none';
       const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display=labelCol?'block':'none';
+      const sumEl=document.getElementById('autoTuneSummary'); if(sumEl) sumEl.textContent='';
 
       // Update UI
       const info = `${file.name} — ${CFG.csvData.length} rows · ${colStats.length}ch · ${hz}Hz`;
@@ -959,8 +947,8 @@ function autoTuneParams() {
   const concMean =concVals.reduce((a,b)=>a+b,0)/concVals.length;
   if(Math.abs(concMean-relaxMean)<5){showToast('Label separation too small to auto-tune','#ff8040');return;}
   const lo=Math.min(relaxMean,concMean),rng=Math.abs(concMean-relaxMean);
-  const newLow =Math.max(5, Math.min(45,Math.round(lo+rng*0.33)));
-  const newHigh=Math.max(55,Math.min(95,Math.round(lo+rng*0.67)));
+  const newLow =Math.round(Math.max(5,  Math.min(90, lo+rng*0.33)));
+  const newHigh=Math.round(Math.max(newLow+5, Math.min(95, lo+rng*0.67)));
   let nTrans=0;
   for(let i=1;i<CFG.csvData.length;i++){const p=CFG.csvData[i-1].label,c=CFG.csvData[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))nTrans++;}
   const avgSegSec=CFG.csvData.length/CFG.csvHz/Math.max(1,nTrans*2);
@@ -1027,10 +1015,10 @@ function _parseCSVText(text, filename) {
 
       const labelCol = headers.find(h => /^label$/i.test(h));
 
-      // Per-column min/max normalization
+      // Per-column min/max normalization (loop avoids spread stack-overflow on large CSVs)
       const colStats = chCands.map(col => {
         const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
-        const mn = Math.min(...vs), mx = Math.max(...vs);
+        let mn=vs[0], mx=vs[0]; for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}
         return { col, mn, rng: mx - mn || 1 };
       });
       if (!colStats.length) { showToast('No numeric columns found', '#ff8040'); return; }
@@ -1056,6 +1044,7 @@ function _parseCSVText(text, filename) {
 
       document.getElementById('csvReplayBtn').style.display='none';
       const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display=labelCol?'block':'none';
+      const sumElUrl=document.getElementById('autoTuneSummary'); if(sumElUrl) sumElUrl.textContent='';
       const info = `${filename} — ${CFG.csvData.length} rows · ${colStats.length}ch · ${hz}Hz`;
       document.getElementById('csvInfoRow').textContent=info;
       document.getElementById('csvInfoRow').style.display='block';
@@ -1730,7 +1719,9 @@ function drawGraph(){
     const xi=hist.length-1-age/CFG._dt;
     if(xi<0||xi>=hist.length) return;
     const x=pL+(xi/(hist.length-1))*(W-pL-pR);
-    ctx.strokeStyle='rgba(255,160,60,0.7)'; ctx.lineWidth=1; ctx.setLineDash([2,2]);
+    const isMarker=ev.type.startsWith('MARKER');
+    ctx.strokeStyle=isMarker?'rgba(160,100,255,0.65)':'rgba(255,160,60,0.7)';
+    ctx.lineWidth=1; ctx.setLineDash(isMarker?[1,3]:[2,2]);
     ctx.beginPath(); ctx.moveTo(x,pT); ctx.lineTo(x,H-pB); ctx.stroke(); ctx.setLineDash([]);
   });
 
@@ -2226,17 +2217,21 @@ function drawReportTimeline() {
   hist.forEach((v,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
   ctx.stroke();
 
-  // V-event markers — vertical dashed lines + triangle cap
+  // V-event markers (orange) and experiment MARKER events (purple)
   RPT.events.forEach(ev=>{
     const age=(Date.now()-ev.t)/1000, maxAge=span*CFG._dt;
     if(age>maxAge) return;
     const xi=span-age/CFG._dt;
     if(xi<0||xi>span) return;
     const x=pL+(xi/span)*(W-pL-pR);
-    ctx.strokeStyle='rgba(255,160,60,0.75)'; ctx.lineWidth=0.9; ctx.setLineDash([2,2]);
+    const isMarker=ev.type.startsWith('MARKER');
+    const col=isMarker?'rgba(160,100,255,0.7)':'rgba(255,160,60,0.75)';
+    ctx.strokeStyle=col; ctx.lineWidth=0.9; ctx.setLineDash(isMarker?[1,3]:[2,2]);
     ctx.beginPath(); ctx.moveTo(x,pT); ctx.lineTo(x,H-pB); ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='rgba(255,160,60,0.9)';
-    ctx.beginPath(); ctx.moveTo(x,pT+1); ctx.lineTo(x-3,pT+7); ctx.lineTo(x+3,pT+7); ctx.fill();
+    if(!isMarker){
+      ctx.fillStyle='rgba(255,160,60,0.9)';
+      ctx.beginPath(); ctx.moveTo(x,pT+1); ctx.lineTo(x-3,pT+7); ctx.lineTo(x+3,pT+7); ctx.fill();
+    }
   });
 
   // Y-axis labels
