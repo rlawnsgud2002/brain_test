@@ -201,6 +201,7 @@
     <div class="csv-track"><div id="csvFill"></div></div>
     <span id="csvPct">0%</span>
     <span id="csvEta" style="font-size:8px;color:#3a5070;margin-left:2px"></span>
+    <span id="csvPauseBtn" onclick="toggleCsvPause()" style="cursor:pointer;padding:1px 5px;border-radius:3px;background:rgba(60,200,140,0.12);border:1px solid rgba(60,200,140,0.25);font-size:10px;color:#40cc90;line-height:1" title="Pause/Resume (Space)">⏸</span>
   </div>
   <span id="csvLabelBadge" style="display:none;font-size:9px;padding:1px 7px;border-radius:3px;letter-spacing:1px;margin-left:2px"></span>
   <span id="topTimer" style="font-size:9px;color:#3a5070;letter-spacing:1px;margin-left:auto">00:00</span>
@@ -530,7 +531,7 @@
       <div class="help-row"><span class="help-desc">Force V-Pattern event</span><span class="help-key">F</span></div>
       <div class="help-row"><span class="help-desc">Toggle manual mode</span><span class="help-key">M</span></div>
       <div class="help-row"><span class="help-desc">Open settings (admin)</span><span class="help-key">S</span></div>
-      <div class="help-row"><span class="help-desc">Mark experiment event</span><span class="help-key">Space</span></div>
+      <div class="help-row"><span class="help-desc">Mark experiment event / Pause CSV</span><span class="help-key">Space</span></div>
       <div class="help-row"><span class="help-desc">Close any modal</span><span class="help-key">Esc</span></div>
       <div class="help-row"><span class="help-desc">This help screen</span><span class="help-key">?</span></div>
     </div>
@@ -656,7 +657,7 @@ const CFG = {
   vLow:false, vLowTime:0, vCooldown:0,
   dataSource:'sim', _lastVActive:false,
   _dt:0.1, _lastStepTime:0,
-  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0, csvSpeed: 5, vLowCsvIdx: 0, csvCols: 1
+  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0, csvSpeed: 5, vLowCsvIdx: 0, csvCols: 1, csvPaused: false
 };
 const getProf = () => DEVICE_PROFILES[CFG.activeDevice];
 const getRegs = () => getProf().regions;
@@ -909,6 +910,11 @@ function loadCSV(input) {
       CFG.csvHz = hz;
       CFG.csvChannel = 0; CFG.csvCols = colStats.length;
 
+      // Stop any active experiment before taking over the data source
+      if(EXP.active) stopExperiment();
+      CFG.csvPaused = false;
+      const _pbL=document.getElementById('csvPauseBtn'); if(_pbL){_pbL.textContent='⏸';_pbL.style.color='#40cc90';}
+
       // Reset session state (reuse existing logic)
       vPhase=null;
       CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vLowCsvIdx = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
@@ -942,6 +948,9 @@ function loadCSV(input) {
 
 function replayCSV() {
   if(!CFG.csvData || !CFG.csvData.length) return;
+  if(EXP.active) stopExperiment();
+  CFG.csvPaused = false;
+  const _pb=document.getElementById('csvPauseBtn'); if(_pb){_pb.textContent='⏸';_pb.style.color='#40cc90';}
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50);
@@ -953,6 +962,14 @@ function replayCSV() {
   document.getElementById('csvFill').style.width='0%';
   document.getElementById('csvPct').textContent='0%';
   document.getElementById('topSrcLabel').textContent='CSV';
+}
+
+function toggleCsvPause() {
+  if(CFG.dataSource !== 'csv') return;
+  CFG.csvPaused = !CFG.csvPaused;
+  const btn = document.getElementById('csvPauseBtn');
+  if(btn) { btn.textContent = CFG.csvPaused ? '▶' : '⏸'; btn.style.color = CFG.csvPaused ? '#ffcc44' : '#40cc90'; }
+  showToast(CFG.csvPaused ? 'CSV paused — Space to resume' : 'CSV resumed', '#60c8a0');
 }
 
 function autoTuneParams() {
@@ -1052,6 +1069,9 @@ function _parseCSVText(text, filename) {
       }).filter(d => !isNaN(d.val));
 
       CFG.csvHz = hz; CFG.csvChannel = 0; CFG.csvCols = colStats.length;
+      if(EXP.active) stopExperiment();
+      CFG.csvPaused = false;
+      const _pbU=document.getElementById('csvPauseBtn'); if(_pbU){_pbU.textContent='⏸';_pbU.style.color='#40cc90';}
       vPhase=null;
       CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
       RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
@@ -1281,6 +1301,7 @@ function simStep(){
   }
   if(CFG.dataSource==='csv' && CFG.csvData && CFG.csvData.length) {
     const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
+    if(CFG.csvPaused) return CFG.history.length ? CFG.history[CFG.history.length-1] : 50;
     if(CFG.csvIdx < CFG.csvData.length) {
       // Average chunkSize rows for this 100ms frame
       const end = Math.min(CFG.csvIdx + chunkSize, CFG.csvData.length);
@@ -1297,6 +1318,14 @@ function simStep(){
       } else {
         CFG.vals.fill(chunkAvg);
       }
+      // Approximate band powers from concentration level (makes band display meaningful during CSV)
+      const _bf = chunkAvg / 100;
+      bands.beta  = Math.round(15 + _bf * 65);
+      bands.alpha = Math.round(65 - _bf * 45);
+      bands.theta = Math.round(50 - _bf * 30);
+      bands.delta = Math.round(38 - _bf * 22);
+      bands.gamma = Math.round(8  + _bf * 42);
+      bands.engagement_index = bands.beta / Math.max(0.1, bands.alpha + bands.theta);
       CFG.csvIdx += chunkSize;
 
       // Update topbar progress + ETA + label badge
@@ -2504,7 +2533,10 @@ function addManualMarker(){
   showToast(`Marker ${EXP.markerCount} placed`,'#ffcc44');
 }
 document.addEventListener('keydown',e=>{
-  if(e.code==='Space'&&EXP.active&&document.activeElement.tagName!=='INPUT'){e.preventDefault();addManualMarker();return;}
+  if(e.code==='Space'&&document.activeElement.tagName!=='INPUT'){
+    if(EXP.active){e.preventDefault();addManualMarker();return;}
+    if(CFG.dataSource==='csv'){e.preventDefault();toggleCsvPause();return;}
+  }
   if(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT') return;
   if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal','helpModal'].forEach(id=>document.getElementById(id).classList.remove('show'));}
   if(e.key==='?'||e.key==='/'){showHelp();return;}
