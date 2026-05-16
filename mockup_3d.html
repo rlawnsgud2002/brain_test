@@ -545,6 +545,18 @@
       <div class="help-row"><span class="help-desc">V-Pattern detection</span><span class="help-desc" style="color:#5070a0">Drop below thLow → rise above thHigh</span></div>
     </div>
     <div class="help-section">
+      <h4>CSV BATCH VALIDATION</h4>
+      <div class="help-row"><span class="help-desc">Load CSV file</span><span class="help-key">📂 IMPORT</span></div>
+      <div class="help-row"><span class="help-desc">Built-in Jordan Bird datasets</span><span class="help-key">SUB-A/B/A+B</span></div>
+      <div class="help-row"><span class="help-desc">One-click demo (Sub-B at 5×)</span><span class="help-key">⚡ DEMO</span></div>
+      <div class="help-row"><span class="help-desc">Auto-set thresholds from label stats</span><span class="help-key">⚡ AUTO-TUNE</span></div>
+      <div style="font-size:9px;color:#4060aa;margin-top:4px;line-height:1.6">
+        All numeric columns are parsed as EEG channels and ensembled.<br>
+        After playback, SESSION REPORT shows Precision / Recall / F1.<br>
+        Relax→Concentrated transitions count as expected V-trigger points.
+      </div>
+    </div>
+    <div class="help-section">
       <h4>CONNECTING A REAL DEVICE</h4>
       <div style="font-size:10px;color:#5070a0;line-height:1.7">
         1. Start the Python backend (<code style="color:#80a0d0">python server.py</code>)<br>
@@ -824,6 +836,10 @@ function onSourceChange() {
     clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('offline');
     bands.engagement_index=null; bands.faa=null; bands.concentration=null;
     bands.meditation=null; bands.poor_signal=0; bands.emg_warn=false;
+    // Clean up CSV playback state so V-alerts are not permanently suppressed
+    CFG.csvBatchMode=false;
+    document.getElementById('csvProgress').style.display='none';
+    const lb=document.getElementById('csvLabelBadge'); if(lb) lb.style.display='none';
   } else {
     wsConnect();
     if(ws&&ws.readyState===WebSocket.OPEN)
@@ -2106,6 +2122,8 @@ function showReport(){
     <div class="report-stat"><span>Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
     <div class="report-stat"><span>Device</span><span>${getProf().label}</span></div>
     <div class="report-stat"><span>Data Source</span><span>${(CFG.dataSource==='csv'||CFG.dataSource==='csv_done')?(CFG.csvLastFile||'CSV'):document.getElementById('srcSel').value.toUpperCase()}</span></div>
+    ${(CFG.dataSource==='csv'||CFG.dataSource==='csv_done')&&CFG.csvCols>1?`<div class="report-stat"><span>CSV Channels</span><span>${CFG.csvCols}ch ensembled · ${CFG.csvHz}Hz</span></div>`:''}
+    <div class="report-stat"><span>Thresholds</span><span>Low=${CFG.thLow}% High=${CFG.thHigh}% dt=${CFG.dt}s</span></div>
     <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">CONCENTRATION</div>
     <div class="report-stat"><span>Mean ± Std Dev</span><span>${avgC}% ± ${focusStd}</span></div>
     <div class="report-stat"><span>Peak</span><span>${maxC}%</span></div>
