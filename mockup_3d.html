@@ -464,11 +464,11 @@
     <h3>SETTINGS <span class="modal-close" onclick="document.getElementById('settingsModal').classList.remove('show')">✕</span></h3>
     <div class="slider-row">
       <label>Threshold Low<span id="tlv" style="color:#60a0ff">30%</span></label>
-      <input type="range" id="thLow" min="0" max="50" value="30" oninput="updateCfg()">
+      <input type="range" id="thLow" min="5" max="95" value="30" oninput="updateCfg()">
     </div>
     <div class="slider-row">
       <label>Threshold High<span id="thv" style="color:#ff9060">70%</span></label>
-      <input type="range" id="thHigh" min="50" max="100" value="70" oninput="updateCfg()">
+      <input type="range" id="thHigh" min="5" max="95" value="70" oninput="updateCfg()">
     </div>
     <div class="slider-row">
       <label>Δt Window<span id="dtv" style="color:#a0c0ff">15s</span></label>
@@ -899,6 +899,7 @@ function loadCSV(input) {
       CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vLowCsvIdx = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
       RPT.sessionStart = Date.now(); RPT.events = []; RPT.peaks = []; RPT._lastAvg = 50; RPT._rising = false; RPT._sum = 0; RPT._count = 0;
       CFG.vals = new Float32Array(14).fill(50);
+      bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
 
       CFG.csvIdx = 0;
       CFG.dataSource = 'csv';
@@ -929,6 +930,7 @@ function replayCSV() {
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50);
+  bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
   CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true;
   document.getElementById('csvReplayBtn').style.display='none';
   document.getElementById('csvProgress').style.display='flex';
@@ -1039,6 +1041,7 @@ function _parseCSVText(text, filename) {
       CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
       RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
       CFG.vals=new Float32Array(14).fill(50);
+      bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
       CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true;
       CFG.csvLastFile=filename;
 
