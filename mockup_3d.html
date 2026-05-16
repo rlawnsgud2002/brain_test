@@ -255,7 +255,6 @@
         </div>
       </div>
       <div id="faaRow" style="display:none;text-align:center;font-size:9px;letter-spacing:1px;margin-top:2px"><span id="faaLabel" style="color:#6480cc"></span></div>
-      <div id="meditRow" style="display:none"></div>
       <div id="sigqRow" style="display:none">
         <div class="bar-bg" style="margin-top:3px"><div class="bar-fill" id="sigqBar" style="background:#00cc66;width:100%"></div></div>
       </div>
@@ -2071,7 +2070,7 @@ function checkPw(){
 }
 function updateCfg(){
   const tl=+document.getElementById('thLow').value, th=+document.getElementById('thHigh').value;
-  if(tl>=th){showToast('LOW threshold must be below HIGH threshold','#ff8040');return;}
+  if(tl>=th){return;}
   CFG.thLow=tl;
   CFG.thHigh=th;
   CFG.dt=+document.getElementById('dtSlider').value;
@@ -2291,7 +2290,6 @@ function recalcValidation() {
   if(!CFG.csvData || !CFG.csvData.length || CFG.csvData[0].label === null) return;
   const dt = parseFloat(document.getElementById('dtTolerance').value) || 1.0;
   const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
-  const frameDur = chunkSize / CFG.csvHz; // seconds of signal per frame
   const frameWallSec = 0.1; // wall-clock seconds per frame (fixed 10Hz simStep)
 
   // Find relaxed→concentrated transitions only (V-pattern fires at LOW→HIGH crossing)
@@ -2448,6 +2446,7 @@ const SIM_PROTOCOLS = {
 };
 
 function startExperiment(){
+  if(CFG.dataSource==='csv'||CFG.dataSource==='csv_done'){showToast('Cannot start experiment during CSV playback','#ff8040');return;}
   if(ws && ws.readyState===WebSocket.OPEN){
     EXP.active=true; EXP.markerCount=0; _expSetRunning(true);
     ws.send(JSON.stringify({type:'exp_start',protocol:document.getElementById('expProtocolSel').value}));
