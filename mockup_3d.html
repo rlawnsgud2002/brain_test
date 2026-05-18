@@ -184,9 +184,18 @@
     #spectroCanvas { display:block; width:100%; height:44px; border-radius:3px; background:rgba(5,8,20,0.6); }
 
     /* ── History modal ── */
-    #historyModal .modal-box { width:500px; max-height:84vh; overflow-y:auto; }
-    .hist-item { padding:6px 0; border-bottom:1px solid rgba(100,140,255,0.1); }
+    #historyModal .modal-box { width:560px; max-height:88vh; overflow-y:auto; }
+    .hist-item { padding:6px 0; border-bottom:1px solid rgba(100,140,255,0.1); display:flex; align-items:flex-start; gap:6px; }
     .hist-item:hover { background:rgba(100,140,255,0.04); border-radius:3px; }
+    .hist-item input[type=checkbox] { margin-top:2px; flex-shrink:0; accent-color:#6480cc; }
+    .hist-item-body { flex:1; min-width:0; }
+    #histCompareSection { display:none; margin-top:10px; border-top:1px solid rgba(100,140,255,0.18); padding-top:10px; }
+    #histCompareSection h4 { font-size:9px; color:#6480cc; letter-spacing:1.5px; margin-bottom:6px; }
+    #compareCanvas { display:block; width:100%; border-radius:3px; background:rgba(5,8,20,0.5); border:1px solid rgba(100,140,255,0.12); margin-bottom:6px; }
+    .cmp-table { width:100%; border-collapse:collapse; font-size:9px; }
+    .cmp-table th { color:#5070a0; font-weight:normal; letter-spacing:1px; padding:3px 5px; border-bottom:1px solid rgba(100,140,255,0.18); text-align:left; }
+    .cmp-table td { padding:3px 5px; color:#a0b8d0; border-bottom:1px solid rgba(100,140,255,0.07); }
+    .cmp-table tr:first-child td { color:#c0d8ff; font-weight:bold; }
 
     /* ── Onboarding ── */
     #onboarding { display:none; position:fixed; inset:0; z-index:900; }
@@ -643,7 +652,13 @@
   <div class="modal-box">
     <h3>SESSION HISTORY <span class="modal-close" onclick="document.getElementById('historyModal').classList.remove('show')">✕</span></h3>
     <div id="historyList"><div style="font-size:10px;color:#6480cc;padding:10px 0">Loading…</div></div>
+    <div id="histCompareSection">
+      <h4>SESSION COMPARISON</h4>
+      <canvas id="compareCanvas" height="110"></canvas>
+      <div id="compareTable"></div>
+    </div>
     <div class="modal-btns" style="margin-top:10px">
+      <button id="compareBtn" onclick="compareSelected()" style="display:none;background:rgba(100,180,255,0.14);color:#80c0ff">⊞ COMPARE</button>
       <button onclick="clearHistory()" style="background:rgba(255,60,60,0.14);color:#ff8080">🗑 CLEAR ALL</button>
       <button onclick="document.getElementById('historyModal').classList.remove('show')">CLOSE</button>
     </div>
@@ -3013,22 +3028,116 @@ function saveSessionHistory(){
     });
   });
 }
+let _histSessions = [];
 function showHistory(){
   _openIDB(db=>{
     const req=db.transaction('sessions','readonly').objectStore('sessions').getAll();
     req.onsuccess=e=>{
-      const sessions=[...e.target.result].reverse();
-      const el=document.getElementById('historyList');
-      if(!sessions.length){el.innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet. Run a CSV replay to save automatically.</div>';}
-      else el.innerHTML=sessions.map(s=>{
-        const d=new Date(s.ts);
-        const ds=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-        const nm=s.sessionName?`<b style="color:#a0c0e0">${s.sessionName}</b> · `:'';
-        return `<div class="hist-item"><div style="display:flex;justify-content:space-between;font-size:10px"><span>${nm}<span style="color:#6480cc">${ds}</span></span><span style="color:#3a5070">${Math.floor(s.dur/60)}m ${s.dur%60}s</span></div><div style="font-size:9px;color:#5070a0;margin-top:2px">${s.device} · V-events:${s.vCount}${s.avgConc!==null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${s.file}`:''}</div></div>`;
-      }).join('');
+      _histSessions=[...e.target.result].reverse();
+      _renderHistoryList();
+      document.getElementById('histCompareSection').style.display='none';
+      document.getElementById('compareBtn').style.display='none';
       document.getElementById('historyModal').classList.add('show');
     };
   });
+}
+function _renderHistoryList(){
+  const el=document.getElementById('historyList');
+  if(!_histSessions.length){
+    el.innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet. Run a CSV replay to save automatically.</div>';
+    return;
+  }
+  el.innerHTML=_histSessions.map((s,i)=>{
+    const d=new Date(s.ts);
+    const ds=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+    const nm=s.sessionName?`<b style="color:#a0c0e0">${s.sessionName}</b> · `:'';
+    return `<div class="hist-item">
+      <input type="checkbox" data-idx="${i}" onchange="_onHistCheck()">
+      <div class="hist-item-body">
+        <div style="display:flex;justify-content:space-between;font-size:10px">
+          <span>${nm}<span style="color:#6480cc">${ds}</span></span>
+          <span style="color:#3a5070">${Math.floor(s.dur/60)}m ${s.dur%60}s</span>
+        </div>
+        <div style="font-size:9px;color:#5070a0;margin-top:2px">${s.device} · V-events:${s.vCount}${s.avgConc!==null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${s.file}`:''}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+function _onHistCheck(){
+  const checked=document.querySelectorAll('#historyList input[type=checkbox]:checked').length;
+  document.getElementById('compareBtn').style.display=checked>=2?'inline-block':'none';
+  if(checked<2) document.getElementById('histCompareSection').style.display='none';
+}
+function compareSelected(){
+  const boxes=[...document.querySelectorAll('#historyList input[type=checkbox]:checked')];
+  const sel=boxes.map(b=>_histSessions[+b.dataset.idx]).filter(Boolean);
+  if(sel.length<2){showToast('Select at least 2 sessions to compare','#ffcc44');return;}
+  _drawCompareChart(sel);
+  _buildCompareTable(sel);
+  document.getElementById('histCompareSection').style.display='block';
+  document.getElementById('histCompareSection').scrollIntoView({behavior:'smooth',block:'nearest'});
+}
+function _drawCompareChart(sel){
+  const canvas=document.getElementById('compareCanvas');
+  const W=canvas.offsetWidth||520; canvas.width=W; const H=110;
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,W,H);
+  const PAD={l:38,r:12,t:18,b:28};
+  const cw=W-PAD.l-PAD.r, ch=H-PAD.t-PAD.b;
+  const n=sel.length;
+  // Two metrics: avgConc (%) and vCount (normalised separately)
+  const maxConc=Math.max(...sel.map(s=>s.avgConc||0),1);
+  const maxV=Math.max(...sel.map(s=>s.vCount),1);
+  const barW=Math.min(30,(cw/n-6)/2);
+  const gap=cw/n;
+  const COLORS=['#6480cc','#40cc88'];
+  // axes
+  ctx.strokeStyle='rgba(100,140,255,0.18)'; ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(PAD.l,PAD.t);ctx.lineTo(PAD.l,PAD.t+ch);ctx.lineTo(PAD.l+cw,PAD.t+ch);ctx.stroke();
+  // y labels
+  ctx.fillStyle='#3a5070'; ctx.font='8px monospace'; ctx.textAlign='right';
+  ['0','50','100'].forEach((v,i)=>{const y=PAD.t+ch*(1-i/2);ctx.fillText(v,PAD.l-3,y+3);
+    ctx.strokeStyle='rgba(100,140,255,0.07)';ctx.beginPath();ctx.moveTo(PAD.l,y);ctx.lineTo(PAD.l+cw,y);ctx.stroke();});
+  // legend
+  ctx.font='8px monospace'; ctx.textAlign='left';
+  ctx.fillStyle=COLORS[0]; ctx.fillRect(PAD.l,4,8,6); ctx.fillStyle='#5070a0'; ctx.fillText('Avg Conc%',PAD.l+10,10);
+  ctx.fillStyle=COLORS[1]; ctx.fillRect(PAD.l+90,4,8,6); ctx.fillStyle='#5070a0'; ctx.fillText('V-events (scaled)',PAD.l+100,10);
+  sel.forEach((s,i)=>{
+    const cx=PAD.l+gap*i+gap/2;
+    // avgConc bar
+    if(s.avgConc!==null){
+      const bh=ch*(s.avgConc/100);
+      ctx.fillStyle=COLORS[0]+'cc';
+      ctx.fillRect(cx-barW-1,PAD.t+ch-bh,barW,bh);
+      ctx.fillStyle='#a0c0ff'; ctx.font='8px monospace'; ctx.textAlign='center';
+      ctx.fillText(s.avgConc+'%',cx-barW/2-1,PAD.t+ch-bh-2);
+    }
+    // vCount bar (normalised to 100% scale)
+    const bh2=ch*(s.vCount/Math.max(maxV,1));
+    ctx.fillStyle=COLORS[1]+'cc';
+    ctx.fillRect(cx+1,PAD.t+ch-bh2,barW,bh2);
+    ctx.fillStyle='#80ffcc'; ctx.font='8px monospace'; ctx.textAlign='center';
+    ctx.fillText(s.vCount,cx+barW/2+1,PAD.t+ch-bh2-2);
+    // x label
+    const lbl=s.sessionName||(s.file?s.file.slice(0,10):`S${i+1}`);
+    ctx.fillStyle='#4a6088'; ctx.font='7px monospace'; ctx.textAlign='center';
+    ctx.fillText(lbl.slice(0,12),cx,PAD.t+ch+14);
+  });
+}
+function _buildCompareTable(sel){
+  const el=document.getElementById('compareTable');
+  const rows=[
+    ['Metric',...sel.map((s,i)=>s.sessionName||(s.file?s.file.slice(0,10):`S${i+1}`))],
+    ['Date',...sel.map(s=>{const d=new Date(s.ts);return`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`})],
+    ['Duration',...sel.map(s=>`${Math.floor(s.dur/60)}m ${s.dur%60}s`)],
+    ['Avg Conc',...sel.map(s=>s.avgConc!==null?s.avgConc+'%':'—')],
+    ['V-events',...sel.map(s=>s.vCount)],
+    ['thLow/thHigh',...sel.map(s=>`${s.thLow}/${s.thHigh}`)],
+    ['dt (arm)',...sel.map(s=>s.dt+'s')],
+    ['Device',...sel.map(s=>s.device)],
+    ['File',...sel.map(s=>s.file||'—')],
+  ];
+  el.innerHTML=`<table class="cmp-table">${rows.map((r,ri)=>`<tr>${r.map((c,ci)=>`<${ri===0||ci===0?'th':'td'}>${c}</${ri===0||ci===0?'th':'td'}>`).join('')}</tr>`).join('')}</table>`;
 }
 function clearHistory(){
   _openIDB(db=>{
