@@ -938,12 +938,12 @@ function onSourceChange() {
     document.getElementById('srcSel').value='sim';
     CFG.dataSource='sim';
     showToast('DEAP: import your CSV via 📂 IMPORT CSV (cols: mean_0_a…mean_6_a + label)','#6080cc');
-    setTimeout(()=>document.getElementById('csvFileInput').click(), 300);
+    document.getElementById('csvFileInput').click();
   } else if(src==='mental') {
     document.getElementById('srcSel').value='sim';
     CFG.dataSource='sim';
     showToast('MENTAL STATE: import your CSV via 📂 IMPORT CSV (any numeric cols + label col)','#6080cc');
-    setTimeout(()=>document.getElementById('csvFileInput').click(), 300);
+    document.getElementById('csvFileInput').click();
   } else {
     wsConnect();
     if(ws&&ws.readyState===WebSocket.OPEN)
@@ -1016,6 +1016,7 @@ function loadCSV(input) {
 
       // Stop any active experiment before taking over the data source
       if(EXP.active) stopExperiment();
+      _sessionSaved = false;
       CFG.csvPaused = false;
       const _pbL=document.getElementById('csvPauseBtn'); if(_pbL){_pbL.textContent='⏸';_pbL.style.color='#40cc90';}
 
@@ -1029,10 +1030,14 @@ function loadCSV(input) {
       CFG.csvIdx = 0;
       CFG.dataSource = 'csv';
       CFG.csvBatchMode = true;
+      CFG.chHistory = [];
       CFG.csvLastFile = file.name;
       document.getElementById('csvReplayBtn').style.display = 'none';
       const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display=labelCol?'block':'none';
       const sumEl=document.getElementById('autoTuneSummary'); if(sumEl) sumEl.textContent='';
+      CFG.showChannels=false;
+      const _chTR=document.getElementById('chToggleRow'); if(_chTR){_chTR.innerHTML='';_chTR.style.display='none';}
+      const _chBtnL=document.getElementById('chToggleBtn'); if(_chBtnL){_chBtnL.textContent='CH ▾';_chBtnL.style.display=(colStats.length>1)?'inline-block':'none';}
 
       // Update UI
       const info = `${file.name} — ${CFG.csvData.length} rows · ${colStats.length}ch · ${hz}Hz`;
@@ -1053,6 +1058,7 @@ function loadCSV(input) {
 function replayCSV() {
   if(!CFG.csvData || !CFG.csvData.length) return;
   if(EXP.active) stopExperiment();
+  _sessionSaved = false;
   CFG.csvPaused = false;
   const _pb=document.getElementById('csvPauseBtn'); if(_pb){_pb.textContent='⏸';_pb.style.color='#40cc90';}
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
@@ -1174,6 +1180,7 @@ function _parseCSVText(text, filename) {
 
       CFG.csvHz = hz; CFG.csvChannel = 0; CFG.csvCols = colStats.length;
       if(EXP.active) stopExperiment();
+      _sessionSaved = false;
       CFG.csvPaused = false;
       const _pbU=document.getElementById('csvPauseBtn'); if(_pbU){_pbU.textContent='⏸';_pbU.style.color='#40cc90';}
       vPhase=null;
@@ -1187,6 +1194,9 @@ function _parseCSVText(text, filename) {
       document.getElementById('csvReplayBtn').style.display='none';
       const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display=labelCol?'block':'none';
       const sumElUrl=document.getElementById('autoTuneSummary'); if(sumElUrl) sumElUrl.textContent='';
+      CFG.showChannels=false;
+      const _chTRu=document.getElementById('chToggleRow'); if(_chTRu){_chTRu.innerHTML='';_chTRu.style.display='none';}
+      const _chBtnU=document.getElementById('chToggleBtn'); if(_chBtnU){_chBtnU.textContent='CH ▾';_chBtnU.style.display=(colStats.length>1)?'inline-block':'none';}
       const info = `${filename} — ${CFG.csvData.length} rows · ${colStats.length}ch · ${hz}Hz`;
       document.getElementById('csvInfoRow').textContent=info;
       document.getElementById('csvInfoRow').style.display='block';
@@ -2480,7 +2490,7 @@ function copyF1() {
 
 function recalcValidation() {
   if(!CFG.csvData || !CFG.csvData.length || CFG.csvData[0].label === null) return;
-  const dt = parseFloat(document.getElementById('dtTolerance').value) || 1.0;
+  const dt = parseFloat(document.getElementById('dtTolerance')?.value) || 1.0;
   const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
   const frameWallSec = 0.1; // wall-clock seconds per frame (fixed 10Hz simStep)
 
@@ -2826,11 +2836,12 @@ function detectVPatternsPure(data, hz, thLow, thHigh, dt, speed) {
     if(vCd>0){vCd--;}
     else {
       if(!vLow&&avg<thLow){vLow=true;vLowIdx=ci;}
-      const elapsed=(ci-vLowIdx)/Math.max(0.01, hz/10/(speed||1));
+      // elapsed in signal-seconds: each chunk covers (speed/10) signal-seconds
+      const elapsed=(ci-vLowIdx)*(speed||1)/10;
       if(vLow&&elapsed>dt)vLow=false;
       if(vLow&&avg>thHigh){
         const sl=hist.length>3?(hist[hist.length-1]-hist[hist.length-4])/3:0;
-        if(elapsed<dt&&sl>0.3){events.push(ci*0.1);vCd=Math.round(dt*10);}
+        if(elapsed<dt&&sl>0.3){events.push(ci*0.1);vCd=Math.round(dt*10/(speed||1));}
         vLow=false;
       }
     }
@@ -2982,13 +2993,17 @@ function _openIDB(cb){
   req.onsuccess=e=>{_IDB.db=e.target.result;cb(_IDB.db);};
   req.onerror=()=>showToast('IndexedDB unavailable','#ff8040');
 }
+let _sessionSaved = false; // guard against duplicate saves per session
 function saveSessionHistory(){
+  if(_sessionSaved) return;
   const dur=Math.round((Date.now()-RPT.sessionStart)/1000);
   if(dur<10) return;
+  _sessionSaved = true;
   const vEvts=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
   const avgC=RPT._count?+(RPT._sum/RPT._count).toFixed(1):null;
   _openIDB(db=>{
     const tx=db.transaction('sessions','readwrite');
+    tx.onerror=()=>{ _sessionSaved=false; }; // allow retry if IDB write failed
     tx.objectStore('sessions').add({
       ts:Date.now(), dur, device:getProf().label,
       file:CFG.csvLastFile||null,
@@ -3027,10 +3042,10 @@ function clearHistory(){
 //  ONBOARDING
 // ══════════════════════════════════════════════════════════
 const OBD_STEPS=[
-  {anchor:'demoBtn',    msg:'<b>⚡ DEMO</b> — Load real EEG data (Jordan Bird dataset, Subject B) with one click.',dy:50},
-  {anchor:'autoTuneRow',msg:'<b>⚡ AUTO-TUNE</b> — After loading, auto-set thLow/thHigh from label statistics.',dy:50},
+  {anchor:'demoBtn',     msg:'<b>⚡ DEMO</b> — Load real EEG data (Jordan Bird dataset, Subject B) with one click.',dy:50},
+  {anchor:'autoTuneRow', msg:'<b>⚡ AUTO-TUNE</b> — After loading, auto-set thLow/thHigh from label statistics.',dy:50},
   {anchor:'csvReplayBtn',msg:'<b>↺ REPLAY</b> — Replay the CSV to run V-pattern detection. Report auto-opens with F1/P/R.',dy:50},
-  {anchor:'rocSection', msg:'<b>PR CURVE</b> — Precision-Recall curve sweeps dt 0.25–5s; best F1 point highlighted.',dy:20},
+  {anchor:null,          msg:'<b>📊 SESSION REPORT</b> — After replay, the report shows Precision-Recall curve (dt sweep), 5-fold cross-validation, V-event histogram, and CSV batch validation.'},
 ];
 let _obdIdx=-1;
 function startOnboarding(){_obdIdx=0;document.getElementById('onboarding').style.display='block';_showObd();}
@@ -3048,8 +3063,9 @@ function _showObd(){
   if(anchor){
     const r=anchor.getBoundingClientRect();
     hl.style.cssText=`display:block;left:${r.left-4}px;top:${r.top-4}px;width:${r.width+8}px;height:${r.height+8}px`;
-    const cx=Math.min(r.left+(s.dx||0), window.innerWidth-250);
+    const cx=Math.min(r.left, window.innerWidth-250);
     const cy=Math.min(r.bottom+(s.dy||10), window.innerHeight-150);
+    card.style.cssText=card.style.cssText.replace(/transform:[^;]+;?/,'');
     card.style.left=Math.max(4,cx)+'px'; card.style.top=Math.max(50,cy)+'px';
   } else {
     hl.style.display='none';
