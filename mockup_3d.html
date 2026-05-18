@@ -195,7 +195,7 @@
     .cmp-table { width:100%; border-collapse:collapse; font-size:9px; }
     .cmp-table th { color:#5070a0; font-weight:normal; letter-spacing:1px; padding:3px 5px; border-bottom:1px solid rgba(100,140,255,0.18); text-align:left; }
     .cmp-table td { padding:3px 5px; color:#a0b8d0; border-bottom:1px solid rgba(100,140,255,0.07); }
-    .cmp-table tr:first-child td { color:#c0d8ff; font-weight:bold; }
+    .cmp-table tr:first-child th { color:#c0d8ff; font-weight:bold; }
 
     /* ── Onboarding ── */
     #onboarding { display:none; position:fixed; inset:0; z-index:900; }
@@ -3028,6 +3028,7 @@ function saveSessionHistory(){
     });
   });
 }
+function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 let _histSessions = [];
 function showHistory(){
   _openIDB(db=>{
@@ -3050,15 +3051,16 @@ function _renderHistoryList(){
   el.innerHTML=_histSessions.map((s,i)=>{
     const d=new Date(s.ts);
     const ds=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-    const nm=s.sessionName?`<b style="color:#a0c0e0">${s.sessionName}</b> · `:'';
+    const nm=s.sessionName?`<b style="color:#a0c0e0">${escH(s.sessionName)}</b> · `:'';
+    const dur=Math.max(0,s.dur||0);
     return `<div class="hist-item">
       <input type="checkbox" data-idx="${i}" onchange="_onHistCheck()">
       <div class="hist-item-body">
         <div style="display:flex;justify-content:space-between;font-size:10px">
           <span>${nm}<span style="color:#6480cc">${ds}</span></span>
-          <span style="color:#3a5070">${Math.floor(s.dur/60)}m ${s.dur%60}s</span>
+          <span style="color:#3a5070">${Math.floor(dur/60)}m ${dur%60}s</span>
         </div>
-        <div style="font-size:9px;color:#5070a0;margin-top:2px">${s.device} · V-events:${s.vCount}${s.avgConc!==null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${s.file}`:''}</div>
+        <div style="font-size:9px;color:#5070a0;margin-top:2px">${escH(s.device)} · V-events:${s.vCount}${s.avgConc!=null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${escH(s.file)}`:''}</div>
       </div>
     </div>`;
   }).join('');
@@ -3072,15 +3074,18 @@ function compareSelected(){
   const boxes=[...document.querySelectorAll('#historyList input[type=checkbox]:checked')];
   const sel=boxes.map(b=>_histSessions[+b.dataset.idx]).filter(Boolean);
   if(sel.length<2){showToast('Select at least 2 sessions to compare','#ffcc44');return;}
+  // Show section BEFORE drawing so offsetWidth is valid
+  document.getElementById('histCompareSection').style.display='block';
   _drawCompareChart(sel);
   _buildCompareTable(sel);
-  document.getElementById('histCompareSection').style.display='block';
   document.getElementById('histCompareSection').scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 function _drawCompareChart(sel){
   const canvas=document.getElementById('compareCanvas');
-  const W=canvas.offsetWidth||520; canvas.width=W; const H=110;
+  const W=Math.max(canvas.offsetWidth||0, canvas.closest('.modal-box')?.clientWidth-32||0, 200);
+  const H=110; canvas.width=W; canvas.height=H;
   const ctx=canvas.getContext('2d');
+  if(!ctx) return;
   ctx.clearRect(0,0,W,H);
   const PAD={l:38,r:12,t:18,b:28};
   const cw=W-PAD.l-PAD.r, ch=H-PAD.t-PAD.b;
@@ -3126,16 +3131,18 @@ function _drawCompareChart(sel){
 }
 function _buildCompareTable(sel){
   const el=document.getElementById('compareTable');
+  if(!el) return;
+  const dur=s=>{const v=Math.max(0,s.dur||0);return`${Math.floor(v/60)}m ${v%60}s`;};
   const rows=[
-    ['Metric',...sel.map((s,i)=>s.sessionName||(s.file?s.file.slice(0,10):`S${i+1}`))],
+    ['Metric',...sel.map((s,i)=>escH(s.sessionName||(s.file?s.file.slice(0,10):`S${i+1}`)))],
     ['Date',...sel.map(s=>{const d=new Date(s.ts);return`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`})],
-    ['Duration',...sel.map(s=>`${Math.floor(s.dur/60)}m ${s.dur%60}s`)],
-    ['Avg Conc',...sel.map(s=>s.avgConc!==null?s.avgConc+'%':'—')],
+    ['Duration',...sel.map(dur)],
+    ['Avg Conc',...sel.map(s=>s.avgConc!=null?s.avgConc+'%':'—')],
     ['V-events',...sel.map(s=>s.vCount)],
     ['thLow/thHigh',...sel.map(s=>`${s.thLow}/${s.thHigh}`)],
     ['dt (arm)',...sel.map(s=>s.dt+'s')],
-    ['Device',...sel.map(s=>s.device)],
-    ['File',...sel.map(s=>s.file||'—')],
+    ['Device',...sel.map(s=>escH(s.device))],
+    ['File',...sel.map(s=>escH(s.file||'—'))],
   ];
   el.innerHTML=`<table class="cmp-table">${rows.map((r,ri)=>`<tr>${r.map((c,ci)=>`<${ri===0||ci===0?'th':'td'}>${c}</${ri===0||ci===0?'th':'td'}>`).join('')}</tr>`).join('')}</table>`;
 }
@@ -3230,9 +3237,9 @@ function _showBatchReport(){
   const el=document.getElementById('batchResultSection'); if(!el)return;
   if(!_batchResults.length){el.style.display='none';return;}
   const tbRows=_batchResults.map(r=>{
-    if(r.f1===null) return `<tr><td style="font-size:9px">${r.name}</td><td colspan="5" style="color:#4060aa">${r.reason}</td></tr>`;
+    if(r.f1===null) return `<tr><td style="font-size:9px">${escH(r.name)}</td><td colspan="5" style="color:#4060aa">${escH(r.reason)}</td></tr>`;
     const fc=r.f1>=0.7?'#40cc90':r.f1>=0.4?'#ffcc44':'#ff8060';
-    return `<tr><td style="font-size:9px">${r.name}</td><td style="color:${fc}">${(r.f1*100).toFixed(1)}%</td><td>${(r.p*100).toFixed(0)}%</td><td>${(r.r*100).toFixed(0)}%</td><td>${r.tp}/${r.trans}</td><td>${r.rows}</td></tr>`;
+    return `<tr><td style="font-size:9px">${escH(r.name)}</td><td style="color:${fc}">${(r.f1*100).toFixed(1)}%</td><td>${(r.p*100).toFixed(0)}%</td><td>${(r.r*100).toFixed(0)}%</td><td>${r.tp}/${r.trans}</td><td>${r.rows}</td></tr>`;
   }).join('');
   const f1s=_batchResults.filter(r=>r.f1!==null).map(r=>r.f1);
   const mean=f1s.length?f1s.reduce((a,b)=>a+b,0)/f1s.length:0;
