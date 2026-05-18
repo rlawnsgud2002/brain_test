@@ -180,6 +180,42 @@
     #expBarStop:hover { background:rgba(255,60,60,0.22); }
     #expBarMark { pointer-events:all; cursor:pointer; font-size:9px; color:#ffcc44; padding:2px 6px; border:1px solid rgba(255,200,50,0.3); border-radius:3px; background:rgba(255,200,50,0.08); }
     #expBarMark:hover { background:rgba(255,200,50,0.22); }
+    /* ── Spectrogram ── */
+    #spectroCanvas { display:block; width:100%; height:44px; border-radius:3px; background:rgba(5,8,20,0.6); }
+
+    /* ── History modal ── */
+    #historyModal .modal-box { width:500px; max-height:84vh; overflow-y:auto; }
+    .hist-item { padding:6px 0; border-bottom:1px solid rgba(100,140,255,0.1); }
+    .hist-item:hover { background:rgba(100,140,255,0.04); border-radius:3px; }
+
+    /* ── Onboarding ── */
+    #onboarding { display:none; position:fixed; inset:0; z-index:900; }
+    #obdOverlay { position:fixed; inset:0; background:rgba(0,0,0,0.62); }
+    #obdCard { position:fixed; background:rgba(8,12,24,0.97); border:1px solid rgba(100,140,255,0.52); border-radius:8px; padding:14px 16px; font-size:11px; width:230px; z-index:901; }
+    #obdCard h4 { font-size:9px; color:#6480cc; letter-spacing:1.5px; margin-bottom:6px; }
+    #obdHighlight { position:fixed; border:2px solid rgba(100,200,255,0.7); border-radius:4px; z-index:899; pointer-events:none; box-shadow:0 0 18px rgba(100,200,255,0.28); transition:all .3s; }
+
+    /* ── Per-channel graph toggle ── */
+    #chToggleRow { display:none; gap:3px; flex-wrap:wrap; margin-bottom:3px; }
+    .ch-btn { flex:0 0 auto; font-size:7px; padding:1px 5px; border-radius:2px; cursor:pointer; background:rgba(100,140,255,0.1); border:1px solid rgba(100,140,255,0.25); color:#5070a0; width:auto; margin:0; }
+    .ch-btn.active { background:rgba(100,140,255,0.28); color:#c0d8ff; border-color:rgba(100,140,255,0.52); }
+
+    /* ── ROC canvas ── */
+    #rocCanvas { display:block; width:100%; border-radius:3px; background:rgba(5,8,20,0.4); border:1px solid rgba(100,140,255,0.1); margin-top:5px; }
+
+    /* ── Mobile responsive ── */
+    @media (max-width:720px) {
+      .left-panel  { width:190px; }
+      .right-panel { width:190px; }
+      #reportModal .modal-box, #historyModal .modal-box { width:92vw; }
+    }
+    @media (max-width:540px) {
+      .left-panel  { width:150px; font-size:9px; }
+      .right-panel { width:150px; font-size:9px; }
+      .panel-box   { padding:7px 8px; }
+      button       { font-size:9px; padding:5px 6px; }
+      .center .panel-box { width:calc(100vw - 316px); }
+    }
   </style>
 </head>
 <body>
@@ -275,6 +311,10 @@
       <div class="bar-bg"><div class="bar-fill" id="bBetaBar" style="background:#ffcc00;width:50%"></div></div>
       <div class="metric-row" style="margin-top:5px"><span class="metric-label">Gamma 30+ Hz</span><span class="metric-val" id="bGamma" style="color:#ff6040">0.0</span></div>
       <div class="bar-bg"><div class="bar-fill" id="bGammaBar" style="background:#ff6040;width:50%"></div></div>
+      <div style="margin-top:6px">
+        <div style="font-size:8px;color:#3a5070;letter-spacing:1px;margin-bottom:2px">BAND TIMELINE (δ θ α β γ) →</div>
+        <canvas id="spectroCanvas" height="44"></canvas>
+      </div>
     </div>
 
     <div class="panel-box">
@@ -308,7 +348,11 @@
   <!-- CENTER -->
   <div class="center">
     <div class="panel-box" style="width:360px">
-      <div class="panel-title">CONCENTRATION TIMELINE · V-PATTERN DETECTION</div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+        <div class="panel-title" style="margin:0">CONCENTRATION TIMELINE · V-PATTERN DETECTION</div>
+        <button id="chToggleBtn" onclick="toggleChannelView()" style="display:none;width:auto;padding:1px 7px;margin:0;font-size:8px;background:rgba(100,140,255,0.12)">CH ▾</button>
+      </div>
+      <div id="chToggleRow"></div>
       <canvas class="mini" id="graphCanvas"></canvas>
     </div>
   </div>
@@ -330,7 +374,9 @@
         <option value="device">EMOTIV EPOC X (LIVE)</option>
       </select>
       <input type="file" id="csvFileInput" accept=".csv" style="display:none" onchange="loadCSV(this)">
+      <input type="file" id="csvBatchInput" accept=".csv" multiple style="display:none" onchange="runBatchCSV(this)">
       <button onclick="document.getElementById('csvFileInput').click()" style="margin-top:5px;background:rgba(40,180,120,0.16);border-color:rgba(40,180,120,0.32);color:#50d0a0">📂 IMPORT CSV</button>
+      <button onclick="document.getElementById('csvBatchInput').click()" style="margin-top:3px;font-size:9px;background:rgba(100,140,255,0.12);border-color:rgba(100,140,255,0.28);color:#7090cc" title="Load multiple CSVs and aggregate F1 metrics">⚡ BATCH VALIDATE (multi-CSV)</button>
       <!-- DEMO one-click -->
       <button id="demoBtn" onclick="loadDemoMode()" style="margin-top:5px;background:rgba(255,150,30,0.18);border-color:rgba(255,150,30,0.38);color:#ffaa40;font-weight:bold;letter-spacing:1px">⚡ DEMO (Sub-B · 5×)</button>
       <!-- Pre-loaded datasets -->
@@ -381,7 +427,9 @@
       <button onclick="showAdmin()">🔐 ADMIN SETTINGS</button>
       <button onclick="forceV()" style="margin-top:4px">⚡ FORCE V-PATTERN</button>
       <button onclick="showReport()">📊 SESSION REPORT</button>
-      <button onclick="showHelp()" style="margin-top:4px;background:rgba(60,80,150,0.14);font-size:9px">? KEYBOARD SHORTCUTS</button>
+      <button onclick="showHistory()" style="margin-top:3px;background:rgba(80,100,200,0.14);font-size:9px">📋 SESSION HISTORY</button>
+      <button onclick="startOnboarding()" style="margin-top:3px;background:rgba(40,160,120,0.12);font-size:9px;color:#50a880">? QUICK START GUIDE</button>
+      <button onclick="showHelp()" style="margin-top:3px;background:rgba(60,80,150,0.14);font-size:9px">? KEYBOARD SHORTCUTS</button>
     </div>
 
   </div>
@@ -434,6 +482,24 @@
       </div>
       <div id="csvSignalInfo" style="font-size:9px;color:#3a5070;margin-top:4px;letter-spacing:.5px"></div>
     </div>
+    <!-- ROC / PR curve (CSV with labels) -->
+    <div id="rocSection" style="display:none">
+      <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">PRECISION–RECALL CURVE (dt sweep 0.25–5s)</div>
+      <canvas id="rocCanvas" height="120"></canvas>
+      <div id="rocAucRow" style="font-size:9px;color:#5070a0;margin-top:3px"></div>
+    </div>
+    <!-- 5-fold cross-validation -->
+    <div id="cvSection" style="display:none">
+      <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">5-FOLD CROSS-VALIDATION</div>
+      <div id="cvResult" style="font-size:10px;margin-top:4px"></div>
+    </div>
+    <!-- V-event interval histogram -->
+    <div id="vHistSection" style="display:none">
+      <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">V-EVENT INTERVAL HISTOGRAM</div>
+      <canvas id="vHistCanvas" height="60" style="display:block;width:100%;margin-top:4px;border-radius:3px;background:rgba(5,8,20,0.4);border:1px solid rgba(100,140,255,0.1)"></canvas>
+    </div>
+    <!-- Batch results -->
+    <div id="batchResultSection" style="display:none"></div>
     <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">V-PATTERN EVENTS</div>
     <div id="reportEvents"></div>
     <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">PEAK ANALYSIS</div>
@@ -572,6 +638,33 @@
   </div>
 </div>
 
+<!-- HISTORY MODAL -->
+<div class="modal" id="historyModal">
+  <div class="modal-box">
+    <h3>SESSION HISTORY <span class="modal-close" onclick="document.getElementById('historyModal').classList.remove('show')">✕</span></h3>
+    <div id="historyList"><div style="font-size:10px;color:#6480cc;padding:10px 0">Loading…</div></div>
+    <div class="modal-btns" style="margin-top:10px">
+      <button onclick="clearHistory()" style="background:rgba(255,60,60,0.14);color:#ff8080">🗑 CLEAR ALL</button>
+      <button onclick="document.getElementById('historyModal').classList.remove('show')">CLOSE</button>
+    </div>
+  </div>
+</div>
+
+<!-- ONBOARDING OVERLAY -->
+<div id="onboarding">
+  <div id="obdOverlay" onclick="skipOnboarding()"></div>
+  <div id="obdHighlight"></div>
+  <div id="obdCard">
+    <h4>QUICK START</h4>
+    <div id="obdMsg" style="font-size:10px;line-height:1.6;color:#a0b8d0"></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:9px">
+      <button onclick="skipOnboarding()" style="width:auto;font-size:9px;padding:2px 8px;margin:0;background:rgba(100,140,255,0.1);color:#5070a0">SKIP</button>
+      <span style="font-size:8px;color:#3a5070" id="obdCounter"></span>
+      <button onclick="nextObdStep()" id="obdNext" style="width:auto;font-size:9px;padding:2px 10px;margin:0">NEXT →</button>
+    </div>
+  </div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script>
@@ -657,7 +750,8 @@ const CFG = {
   vLow:false, vLowTime:0, vCooldown:0,
   dataSource:'sim', _lastVActive:false,
   _dt:0.1, _lastStepTime:0,
-  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0, csvSpeed: 5, vLowCsvIdx: 0, csvCols: 1, csvPaused: false
+  csvData: null, csvIdx: 0, csvHz: 128, csvBatchMode: false, csvChannel: 0, csvSpeed: 5, vLowCsvIdx: 0, csvCols: 1, csvPaused: false,
+  chHistory: [], showChannels: false
 };
 const getProf = () => DEVICE_PROFILES[CFG.activeDevice];
 const getRegs = () => getProf().regions;
@@ -840,6 +934,16 @@ function onSourceChange() {
     CFG.csvBatchMode=false;
     document.getElementById('csvProgress').style.display='none';
     const lb=document.getElementById('csvLabelBadge'); if(lb) lb.style.display='none';
+  } else if(src==='deap') {
+    document.getElementById('srcSel').value='sim';
+    CFG.dataSource='sim';
+    showToast('DEAP: import your CSV via 📂 IMPORT CSV (cols: mean_0_a…mean_6_a + label)','#6080cc');
+    setTimeout(()=>document.getElementById('csvFileInput').click(), 300);
+  } else if(src==='mental') {
+    document.getElementById('srcSel').value='sim';
+    CFG.dataSource='sim';
+    showToast('MENTAL STATE: import your CSV via 📂 IMPORT CSV (any numeric cols + label col)','#6080cc');
+    setTimeout(()=>document.getElementById('csvFileInput').click(), 300);
   } else {
     wsConnect();
     if(ws&&ws.readyState===WebSocket.OPEN)
@@ -955,7 +1059,7 @@ function replayCSV() {
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50);
   bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
-  CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true;
+  CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true; CFG.chHistory=[];
   document.getElementById('csvReplayBtn').style.display='none';
   document.getElementById('csvProgress').style.display='flex';
   const _lbRpl=document.getElementById('csvLabelBadge'); if(_lbRpl) _lbRpl.style.display='none';
@@ -1077,7 +1181,7 @@ function _parseCSVText(text, filename) {
       RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
       CFG.vals=new Float32Array(14).fill(50);
       bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
-      CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true;
+      CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true; CFG.chHistory=[];
       CFG.csvLastFile=filename;
 
       document.getElementById('csvReplayBtn').style.display='none';
@@ -1326,6 +1430,12 @@ function simStep(){
       bands.delta = Math.round(38 - _bf * 22);
       bands.gamma = Math.round(8  + _bf * 42);
       bands.engagement_index = bands.beta / Math.max(0.1, bands.alpha + bands.theta);
+      // Per-channel history for overlay graph
+      if(csvCols > 1) {
+        const chAvgs = Array.from({length:csvCols},(_,c)=>colSums[c]/count);
+        CFG.chHistory.push(chAvgs);
+        if(CFG.chHistory.length > 120) CFG.chHistory.shift();
+      }
       CFG.csvIdx += chunkSize;
 
       // Update topbar progress + ETA + label badge
@@ -1804,6 +1914,24 @@ function drawGraph(){
     ctx.fillStyle='rgba(40,200,100,0.7)'; ctx.fillText('■CONC',W-pR,pT+7);
     ctx.fillStyle='rgba(60,130,255,0.7)'; ctx.fillText('■RELAX',W-pR,pT+15);
   }
+
+  // Per-channel overlay (when CH toggle is ON and chHistory available)
+  if(CFG.showChannels && CFG.chHistory.length >= 2) {
+    const activeChs = _getActiveChannels();
+    const ch = CFG.chHistory;
+    activeChs.forEach(ci => {
+      ctx.strokeStyle = CH_COLORS[ci%CH_COLORS.length] + '90';
+      ctx.lineWidth = 1; ctx.setLineDash([]);
+      ctx.beginPath();
+      ch.forEach((frm,i) => {
+        const v = frm[ci] ?? 50;
+        const x = pL + (i/(ch.length-1||1))*(W-pL-pR);
+        const y = pT + (1-v/100)*(H-pT-pB);
+        i===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+    });
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2056,6 +2184,7 @@ function animate(){
     if(CFG._lastStepTime>0) CFG._dt=Math.max(0.05,Math.min(1,(now-CFG._lastStepTime)/1000));
     CFG._lastStepTime=now;
     const avg=simStep();update3D();updateUI(avg);drawGraph();
+    updateSpectro(); drawSpectro();
   }
 
   if(pulseActive){
@@ -2196,8 +2325,42 @@ function showReport(){
   }
 
   document.getElementById('reportModal').classList.add('show');
-  // Draw mini session timeline after modal is visible so canvas clientWidth is non-zero
-  setTimeout(() => drawReportTimeline(), 0);
+  // Save to history automatically
+  saveSessionHistory();
+  // Draw after modal is visible so clientWidth is non-zero
+  setTimeout(() => {
+    drawReportTimeline();
+    // ROC / PR curve
+    const rocSec=document.getElementById('rocSection');
+    const cvSec=document.getElementById('cvSection');
+    const vHSec=document.getElementById('vHistSection');
+    if(hasCsvLabels) {
+      rocSec.style.display='block';
+      const rocPts=calcROCPoints();
+      drawROCCanvas(rocPts);
+      if(rocPts) {
+        const best=rocPts.reduce((a,b)=>b.f1>a.f1?b:a);
+        document.getElementById('rocAucRow').textContent=`Best: dt=${best.dt}s F1=${(best.f1*100).toFixed(1)}% P=${(best.prec*100).toFixed(1)}% R=${(best.rec*100).toFixed(1)}%`;
+      }
+      cvSec.style.display='block';
+      const cv=calcCrossVal(5);
+      document.getElementById('cvResult').innerHTML=cv
+        ?`F1 = <b style="color:${cv.mean>=0.7?'#40cc90':cv.mean>=0.4?'#ffcc44':'#ff8060'}">${(cv.mean*100).toFixed(1)}%</b> ± ${(cv.std*100).toFixed(1)}% · Folds: [${cv.folds.map(f=>(f*100).toFixed(0)+'%').join(', ')}]`
+        :'Insufficient data for cross-validation';
+    } else {
+      rocSec.style.display='none';
+      cvSec.style.display='none';
+    }
+    // V-event histogram
+    const evts=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
+    if(evts.length>=2){vHSec.style.display='block';drawVHistogram();}
+    else vHSec.style.display='none';
+    // Batch results (keep if already populated)
+    if(_batchResults.length) _showBatchReport();
+    // Per-channel toggle button visibility
+    const chBtn=document.getElementById('chToggleBtn');
+    if(chBtn) chBtn.style.display=(CFG.csvCols>1)?'inline-block':'none';
+  }, 0);
 }
 
 function drawReportTimeline() {
@@ -2538,7 +2701,7 @@ document.addEventListener('keydown',e=>{
     if(CFG.dataSource==='csv'){e.preventDefault();toggleCsvPause();return;}
   }
   if(document.activeElement.tagName==='INPUT'||document.activeElement.tagName==='SELECT') return;
-  if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal','helpModal'].forEach(id=>document.getElementById(id).classList.remove('show'));}
+  if(e.key==='Escape'){['adminModal','settingsModal','reportModal','calModal','helpModal','historyModal'].forEach(id=>document.getElementById(id).classList.remove('show'));skipOnboarding();}
   if(e.key==='?'||e.key==='/'){showHelp();return;}
   if(e.key==='f'||e.key==='F'){forceV();}
   if(e.key==='r'||e.key==='R'){tRotX=0.3;tRotY=Math.PI;tZoom=3.5;}
@@ -2575,6 +2738,384 @@ function _handleExperiment(d){
   }
 }
 
+// ══════════════════════════════════════════════════════════
+//  SPECTROGRAM (rolling band-power stacked timeline)
+// ══════════════════════════════════════════════════════════
+const SPECTRO = { buf: [], maxLen: 120 };
+const SPECTRO_COLS = ['#4444ff','#6040cc','#00cc88','#ffcc00','#ff5030']; // δ θ α β γ
+function updateSpectro() {
+  const tot = Math.max(1, (bands.delta||0)+(bands.theta||0)+(bands.alpha||0)+(bands.beta||0)+(bands.gamma||0));
+  SPECTRO.buf.push([(bands.delta||0)/tot,(bands.theta||0)/tot,(bands.alpha||0)/tot,(bands.beta||0)/tot,(bands.gamma||0)/tot]);
+  if(SPECTRO.buf.length > SPECTRO.maxLen) SPECTRO.buf.shift();
+}
+function drawSpectro() {
+  const cv = document.getElementById('spectroCanvas');
+  if(!cv || !SPECTRO.buf.length) return;
+  const W = cv.offsetWidth, H = 44;
+  if(!W) return;
+  const ctx = _fitCanvas(cv, W, H, false);
+  ctx.clearRect(0,0,W,H);
+  const n = SPECTRO.buf.length;
+  SPECTRO.buf.forEach((frm,i) => {
+    const x  = Math.round(i/n*W);
+    const x2 = Math.round((i+1)/n*W);
+    let y = 0;
+    frm.forEach((v,b) => {
+      const h = Math.round(v * H);
+      ctx.fillStyle = SPECTRO_COLS[b] + 'b0';
+      ctx.fillRect(x, y, Math.max(1,x2-x), h);
+      y += h;
+    });
+  });
+  // Band legend at right edge
+  const lbls=['δ','θ','α','β','γ'];
+  ctx.font='7px Courier New';
+  let ly=3;
+  SPECTRO_COLS.forEach((c,i)=>{
+    ctx.fillStyle=c; ctx.fillText(lbls[i],W-10,ly+7); ly+=9;
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+//  PER-CHANNEL GRAPH TOGGLE
+// ══════════════════════════════════════════════════════════
+const CH_COLORS=['#4488ff','#ff6644','#44dd88','#ffcc44','#cc66ff','#44ccff','#ff88aa'];
+function toggleChannelView() {
+  CFG.showChannels = !CFG.showChannels;
+  const row = document.getElementById('chToggleRow');
+  if(CFG.showChannels && CFG.csvCols > 1) {
+    row.style.display = 'flex';
+    if(!row.children.length) _buildChButtons();
+  } else {
+    row.style.display = 'none';
+    CFG.showChannels = false;
+  }
+  document.getElementById('chToggleBtn').textContent = CFG.showChannels ? 'CH ▴' : 'CH ▾';
+}
+function _buildChButtons() {
+  const row = document.getElementById('chToggleRow');
+  row.innerHTML = '';
+  for(let c=0;c<CFG.csvCols;c++){
+    const b=document.createElement('button');
+    b.className='ch-btn active';
+    b.textContent='CH'+(c+1);
+    b.style.borderColor=CH_COLORS[c%CH_COLORS.length];
+    b.style.color=CH_COLORS[c%CH_COLORS.length];
+    b.dataset.ch=c;
+    b.onclick=()=>{b.classList.toggle('active');};
+    row.appendChild(b);
+  }
+}
+function _getActiveChannels() {
+  return Array.from(document.querySelectorAll('#chToggleRow .ch-btn.active')).map(b=>+b.dataset.ch);
+}
+
+// ══════════════════════════════════════════════════════════
+//  PURE V-PATTERN DETECTOR (stateless, for CV / ROC)
+// ══════════════════════════════════════════════════════════
+function detectVPatternsPure(data, hz, thLow, thHigh, dt, speed) {
+  const cs = Math.max(1, Math.round(hz / 10 * (speed||1)));
+  const events = [];
+  let vLow=false, vLowIdx=0, vCd=0;
+  const hist = [];
+  for(let ci=0; ci < Math.ceil(data.length/cs); ci++) {
+    const s=ci*cs, e=Math.min(s+cs,data.length);
+    let sum=0,cnt=0; for(let i=s;i<e;i++){sum+=data[i].val;cnt++;}
+    const avg=sum/cnt;
+    hist.push(avg); if(hist.length>8) hist.shift();
+    if(vCd>0){vCd--;}
+    else {
+      if(!vLow&&avg<thLow){vLow=true;vLowIdx=ci;}
+      const elapsed=(ci-vLowIdx)/Math.max(0.01, hz/10/(speed||1));
+      if(vLow&&elapsed>dt)vLow=false;
+      if(vLow&&avg>thHigh){
+        const sl=hist.length>3?(hist[hist.length-1]-hist[hist.length-4])/3:0;
+        if(elapsed<dt&&sl>0.3){events.push(ci*0.1);vCd=Math.round(dt*10);}
+        vLow=false;
+      }
+    }
+  }
+  return events;
+}
+
+// ══════════════════════════════════════════════════════════
+//  ROC / PRECISION-RECALL CURVE
+// ══════════════════════════════════════════════════════════
+function calcROCPoints() {
+  if(!CFG.csvData||!CFG.csvData.length||CFG.csvData[0].label===null) return null;
+  const cs=Math.max(1,Math.round(CFG.csvHz/10*(CFG.csvSpeed||1)));
+  const trans=[];
+  for(let i=1;i<CFG.csvData.length;i++){
+    const p=CFG.csvData[i-1].label,c=CFG.csvData[i].label;
+    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*0.1);
+  }
+  if(!trans.length) return null;
+  const dtVals=[0.25,0.5,0.75,1,1.5,2,2.5,3,4,5];
+  return dtVals.map(dt=>{
+    const trigs=detectVPatternsPure(CFG.csvData,CFG.csvHz,CFG.thLow,CFG.thHigh,dt,CFG.csvSpeed);
+    let tp=0; const used=new Set();
+    trans.forEach(ts=>{for(let ti=0;ti<trigs.length;ti++){if(!used.has(ti)&&Math.abs(trigs[ti]-ts)<=dt){tp++;used.add(ti);break;}}});
+    const fp=trigs.length-used.size, fn=trans.length-tp;
+    const prec=trigs.length?tp/trigs.length:0, rec=trans.length?tp/trans.length:0;
+    const f1=(prec+rec)>0?2*prec*rec/(prec+rec):0;
+    return {dt,prec,rec,f1,tp,fp,fn};
+  });
+}
+
+function drawROCCanvas(points) {
+  const cv=document.getElementById('rocCanvas'); if(!cv||!points||!points.length) return;
+  const W=cv.parentElement?.clientWidth||460, H=120;
+  const ctx=_fitCanvas(cv,W,H,true);
+  const pL=28,pR=12,pT=8,pB=18;
+  ctx.clearRect(0,0,W,H);
+  // Axes
+  ctx.strokeStyle='rgba(100,140,255,0.3)'; ctx.lineWidth=1; ctx.setLineDash([]);
+  ctx.beginPath(); ctx.moveTo(pL,pT); ctx.lineTo(pL,H-pB); ctx.lineTo(W-pR,H-pB); ctx.stroke();
+  // Grid & labels
+  ctx.font='7px Courier New'; ctx.fillStyle='rgba(100,140,255,0.45)';
+  [0,0.5,1].forEach(v=>{
+    const x=pL+v*(W-pL-pR), y=H-pB-v*(H-pT-pB);
+    ctx.strokeStyle='rgba(100,140,255,0.1)'; ctx.setLineDash([2,3]);
+    ctx.beginPath(); ctx.moveTo(x,pT); ctx.lineTo(x,H-pB); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(pL,y); ctx.lineTo(W-pR,y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.textAlign='center'; ctx.fillText((v*100).toFixed(0)+'%',x,H-pB+9);
+    ctx.textAlign='right'; ctx.fillText((v*100).toFixed(0)+'%',pL-2,y+3);
+  });
+  ctx.fillStyle='rgba(100,140,255,0.35)'; ctx.textAlign='center';
+  ctx.fillText('Recall →',pL+(W-pL-pR)/2,H-1);
+  ctx.save(); ctx.translate(9,pT+(H-pT-pB)/2); ctx.rotate(-Math.PI/2); ctx.fillText('Precision',0,0); ctx.restore();
+  // Curve
+  const sorted=[...points].sort((a,b)=>a.rec-b.rec);
+  ctx.strokeStyle='rgba(60,200,120,0.8)'; ctx.lineWidth=1.5; ctx.setLineDash([]);
+  ctx.beginPath();
+  sorted.forEach((p,i)=>{
+    const x=pL+p.rec*(W-pL-pR), y=H-pB-p.prec*(H-pT-pB);
+    i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+  });
+  ctx.stroke();
+  // AUC
+  let auc=0;
+  for(let i=1;i<sorted.length;i++) auc+=Math.abs(sorted[i].rec-sorted[i-1].rec)*(sorted[i].prec+sorted[i-1].prec)/2;
+  // Best F1 point
+  const best=points.reduce((a,b)=>b.f1>a.f1?b:a);
+  points.forEach(p=>{
+    const x=pL+p.rec*(W-pL-pR), y=H-pB-p.prec*(H-pT-pB);
+    const isBest=p===best;
+    ctx.fillStyle=isBest?'#40cc90':p.f1>=0.4?'#ffcc44':'#ff6060';
+    ctx.beginPath(); ctx.arc(x,y,isBest?4:2.5,0,Math.PI*2); ctx.fill();
+    if(isBest){ctx.font='7px Courier New';ctx.fillStyle='#40cc90';ctx.textAlign='left';ctx.fillText(`dt=${p.dt}s F1=${(p.f1*100).toFixed(0)}%`,x+5,y-2);}
+  });
+  ctx.font='8px Courier New'; ctx.fillStyle='#40cc90'; ctx.textAlign='right';
+  ctx.fillText(`AUC-PR=${auc.toFixed(3)}`,W-pR,pT+8);
+}
+
+// ══════════════════════════════════════════════════════════
+//  5-FOLD CROSS-VALIDATION
+// ══════════════════════════════════════════════════════════
+function calcCrossVal(K=5) {
+  if(!CFG.csvData||!CFG.csvData.length||CFG.csvData[0].label===null) return null;
+  const n=CFG.csvData.length, foldSz=Math.floor(n/K);
+  const dt=parseFloat(document.getElementById('dtTolerance')?.value)||1.0;
+  const f1s=[];
+  for(let k=0;k<K;k++){
+    const vs=k*foldSz, ve=k===K-1?n:vs+foldSz;
+    const val=CFG.csvData.slice(vs,ve);
+    const cs=Math.max(1,Math.round(CFG.csvHz/10*(CFG.csvSpeed||1)));
+    const trans=[];
+    for(let i=1;i<val.length;i++){
+      const p=val[i-1].label,c=val[i].label;
+      if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*0.1);
+    }
+    const trigs=detectVPatternsPure(val,CFG.csvHz,CFG.thLow,CFG.thHigh,CFG.dt,CFG.csvSpeed);
+    let tp=0; const used=new Set();
+    trans.forEach(ts=>{for(let ti=0;ti<trigs.length;ti++){if(!used.has(ti)&&Math.abs(trigs[ti]-ts)<=dt){tp++;used.add(ti);break;}}});
+    const fp=trigs.length-used.size, fn=trans.length-tp;
+    const pr=trigs.length?tp/trigs.length:0, rc=trans.length?tp/trans.length:0;
+    f1s.push((pr+rc)>0?2*pr*rc/(pr+rc):0);
+  }
+  const mean=f1s.reduce((a,b)=>a+b,0)/K;
+  const std=Math.sqrt(f1s.reduce((s,v)=>s+(v-mean)**2,0)/K);
+  return {mean,std,folds:f1s};
+}
+
+// ══════════════════════════════════════════════════════════
+//  V-EVENT INTERVAL HISTOGRAM
+// ══════════════════════════════════════════════════════════
+function drawVHistogram() {
+  const cv=document.getElementById('vHistCanvas'); if(!cv) return;
+  const evts=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
+  if(evts.length<2){cv.parentElement.style.display='none';return;}
+  const intervals=[];
+  for(let i=1;i<evts.length;i++) intervals.push((evts[i].t-evts[i-1].t)/1000);
+  const mx=Math.max(...intervals), mn=0;
+  const nBins=Math.min(12,intervals.length);
+  const binW=(mx-mn)/nBins||1;
+  const bins=new Array(nBins).fill(0);
+  intervals.forEach(v=>{ const b=Math.min(nBins-1,Math.floor((v-mn)/binW)); bins[b]++; });
+  const W=cv.parentElement.clientWidth||460, H=60;
+  const ctx=_fitCanvas(cv,W,H,true);
+  const pL=6,pR=6,pT=4,pB=14;
+  ctx.clearRect(0,0,W,H);
+  const maxB=Math.max(...bins)||1;
+  const bw=(W-pL-pR)/nBins;
+  bins.forEach((count,i)=>{
+    const x=pL+i*bw, h=(count/maxB)*(H-pT-pB);
+    const t=count/maxB;
+    ctx.fillStyle=`rgba(${Math.round(40+t*215)},${Math.round(200-t*100)},${Math.round(120-t*60)},0.75)`;
+    ctx.fillRect(x+1,H-pB-h,bw-2,h);
+  });
+  ctx.font='7px Courier New'; ctx.fillStyle='rgba(100,140,255,0.5)'; ctx.textAlign='left';
+  ctx.fillText('0s',pL,H-2);
+  ctx.textAlign='right'; ctx.fillText(mx.toFixed(0)+'s',W-pR,H-2);
+  ctx.textAlign='center'; ctx.fillText('interval between V-events',W/2,H-2);
+}
+
+// ══════════════════════════════════════════════════════════
+//  SESSION HISTORY (IndexedDB)
+// ══════════════════════════════════════════════════════════
+const _IDB={db:null};
+function _openIDB(cb){
+  if(_IDB.db){cb(_IDB.db);return;}
+  const req=indexedDB.open('eeg_sessions',1);
+  req.onupgradeneeded=e=>e.target.result.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
+  req.onsuccess=e=>{_IDB.db=e.target.result;cb(_IDB.db);};
+  req.onerror=()=>showToast('IndexedDB unavailable','#ff8040');
+}
+function saveSessionHistory(){
+  const dur=Math.round((Date.now()-RPT.sessionStart)/1000);
+  if(dur<10) return;
+  const vEvts=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
+  const avgC=RPT._count?+(RPT._sum/RPT._count).toFixed(1):null;
+  _openIDB(db=>{
+    const tx=db.transaction('sessions','readwrite');
+    tx.objectStore('sessions').add({
+      ts:Date.now(), dur, device:getProf().label,
+      file:CFG.csvLastFile||null,
+      avgConc:avgC, vCount:vEvts.length,
+      thLow:CFG.thLow, thHigh:CFG.thHigh, dt:CFG.dt,
+      sessionName:document.getElementById('sessionName')?.value||''
+    });
+  });
+}
+function showHistory(){
+  _openIDB(db=>{
+    const req=db.transaction('sessions','readonly').objectStore('sessions').getAll();
+    req.onsuccess=e=>{
+      const sessions=[...e.target.result].reverse();
+      const el=document.getElementById('historyList');
+      if(!sessions.length){el.innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet. Run a CSV replay to save automatically.</div>';}
+      else el.innerHTML=sessions.map(s=>{
+        const d=new Date(s.ts);
+        const ds=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+        const nm=s.sessionName?`<b style="color:#a0c0e0">${s.sessionName}</b> · `:'';
+        return `<div class="hist-item"><div style="display:flex;justify-content:space-between;font-size:10px"><span>${nm}<span style="color:#6480cc">${ds}</span></span><span style="color:#3a5070">${Math.floor(s.dur/60)}m ${s.dur%60}s</span></div><div style="font-size:9px;color:#5070a0;margin-top:2px">${s.device} · V-events:${s.vCount}${s.avgConc!==null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${s.file}`:''}</div></div>`;
+      }).join('');
+      document.getElementById('historyModal').classList.add('show');
+    };
+  });
+}
+function clearHistory(){
+  _openIDB(db=>{
+    db.transaction('sessions','readwrite').objectStore('sessions').clear();
+    showToast('Session history cleared','#ffcc44');
+    document.getElementById('historyList').innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet.</div>';
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+//  ONBOARDING
+// ══════════════════════════════════════════════════════════
+const OBD_STEPS=[
+  {anchor:'demoBtn',    msg:'<b>⚡ DEMO</b> — Load real EEG data (Jordan Bird dataset, Subject B) with one click.',dy:50},
+  {anchor:'autoTuneRow',msg:'<b>⚡ AUTO-TUNE</b> — After loading, auto-set thLow/thHigh from label statistics.',dy:50},
+  {anchor:'csvReplayBtn',msg:'<b>↺ REPLAY</b> — Replay the CSV to run V-pattern detection. Report auto-opens with F1/P/R.',dy:50},
+  {anchor:'rocSection', msg:'<b>PR CURVE</b> — Precision-Recall curve sweeps dt 0.25–5s; best F1 point highlighted.',dy:20},
+];
+let _obdIdx=-1;
+function startOnboarding(){_obdIdx=0;document.getElementById('onboarding').style.display='block';_showObd();}
+function skipOnboarding(){_obdIdx=-1;document.getElementById('onboarding').style.display='none';document.getElementById('obdHighlight').style.display='none';}
+function nextObdStep(){_obdIdx++;_showObd();}
+function _showObd(){
+  if(_obdIdx<0||_obdIdx>=OBD_STEPS.length){skipOnboarding();return;}
+  const s=OBD_STEPS[_obdIdx];
+  document.getElementById('obdMsg').innerHTML=s.msg;
+  document.getElementById('obdCounter').textContent=`${_obdIdx+1}/${OBD_STEPS.length}`;
+  document.getElementById('obdNext').textContent=_obdIdx===OBD_STEPS.length-1?'DONE ✓':'NEXT →';
+  const anchor=document.getElementById(s.anchor);
+  const card=document.getElementById('obdCard');
+  const hl=document.getElementById('obdHighlight');
+  if(anchor){
+    const r=anchor.getBoundingClientRect();
+    hl.style.cssText=`display:block;left:${r.left-4}px;top:${r.top-4}px;width:${r.width+8}px;height:${r.height+8}px`;
+    const cx=Math.min(r.left+(s.dx||0), window.innerWidth-250);
+    const cy=Math.min(r.bottom+(s.dy||10), window.innerHeight-150);
+    card.style.left=Math.max(4,cx)+'px'; card.style.top=Math.max(50,cy)+'px';
+  } else {
+    hl.style.display='none';
+    card.style.left='50%'; card.style.top='50%'; card.style.transform='translate(-50%,-50%)';
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+//  BATCH CSV VALIDATION (multi-file)
+// ══════════════════════════════════════════════════════════
+let _batchResults=[];
+function runBatchCSV(input){
+  const files=Array.from(input.files); if(!files.length)return;
+  _batchResults=[];
+  showToast(`Processing ${files.length} CSV files…`,'#6080cc');
+  const dt=parseFloat(document.getElementById('dtTolerance')?.value)||1.0;
+  let idx=0;
+  function nextFile(){
+    if(idx>=files.length){_showBatchReport();return;}
+    const file=files[idx++];
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      Papa.parse(ev.target.result,{header:true,skipEmptyLines:true,complete:res=>{
+        const rows=res.data; if(!rows.length){_batchResults.push({name:file.name,f1:null,reason:'empty'});nextFile();return;}
+        const hdrs=Object.keys(rows[0]);
+        const hzH=hdrs.find(h=>/^(sampling_rate|hz|sample_rate|freq)$/i.test(h));
+        const hz=hzH&&!isNaN(parseFloat(rows[0][hzH]))?parseFloat(rows[0][hzH]):128;
+        const nCols=hdrs.filter(h=>!/^label$/i.test(h)&&h!==hzH&&!isNaN(parseFloat(rows[0][h])));
+        const isKag=nCols.some(c=>/^mean_\d_a$/i.test(c));
+        const cols=isKag?nCols.filter(c=>/^mean_\d_a$/i.test(c)):nCols;
+        const lblCol=hdrs.find(h=>/^label$/i.test(h));
+        if(!lblCol){_batchResults.push({name:file.name,f1:null,reason:'no label col'});nextFile();return;}
+        const cStats=cols.map(col=>{const vs=rows.map(r=>parseFloat(r[col])).filter(v=>!isNaN(v));let mn=vs[0],mx=vs[0];for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}return{col,mn,rng:mx-mn||1};});
+        const data=rows.map(r=>{const nv=cStats.map(({col,mn,rng})=>{const v=parseFloat(r[col]);return isNaN(v)?50:((v-mn)/rng)*100;});return{val:nv.reduce((a,b)=>a+b,0)/nv.length,label:(r[lblCol]||'').trim().toLowerCase()};}).filter(d=>!isNaN(d.val));
+        const cs=Math.max(1,Math.round(hz/10*(CFG.csvSpeed||1)));
+        const trans=[];
+        for(let i=1;i<data.length;i++){const p=data[i-1].label,c=data[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))trans.push(Math.floor(i/cs)*0.1);}
+        const trigs=detectVPatternsPure(data,hz,CFG.thLow,CFG.thHigh,CFG.dt,CFG.csvSpeed||1);
+        let tp=0;const used=new Set();
+        trans.forEach(ts=>{for(let ti=0;ti<trigs.length;ti++){if(!used.has(ti)&&Math.abs(trigs[ti]-ts)<=dt){tp++;used.add(ti);break;}}});
+        const fp=trigs.length-used.size,fn=trans.length-tp;
+        const p=trigs.length?tp/trigs.length:0,r=trans.length?tp/trans.length:0;
+        const f1=(p+r)>0?2*p*r/(p+r):0;
+        _batchResults.push({name:file.name,f1,p,r,tp,fp,fn,rows:data.length,hz,trans:trans.length,trigs:trigs.length});
+        nextFile();
+      }});
+    };
+    reader.readAsText(file);
+  }
+  nextFile(); input.value='';
+}
+function _showBatchReport(){
+  const el=document.getElementById('batchResultSection'); if(!el)return;
+  if(!_batchResults.length){el.style.display='none';return;}
+  const tbRows=_batchResults.map(r=>{
+    if(r.f1===null) return `<tr><td style="font-size:9px">${r.name}</td><td colspan="5" style="color:#4060aa">${r.reason}</td></tr>`;
+    const fc=r.f1>=0.7?'#40cc90':r.f1>=0.4?'#ffcc44':'#ff8060';
+    return `<tr><td style="font-size:9px">${r.name}</td><td style="color:${fc}">${(r.f1*100).toFixed(1)}%</td><td>${(r.p*100).toFixed(0)}%</td><td>${(r.r*100).toFixed(0)}%</td><td>${r.tp}/${r.trans}</td><td>${r.rows}</td></tr>`;
+  }).join('');
+  const f1s=_batchResults.filter(r=>r.f1!==null).map(r=>r.f1);
+  const mean=f1s.length?f1s.reduce((a,b)=>a+b,0)/f1s.length:0;
+  el.style.display='block';
+  el.innerHTML=`<div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">BATCH RESULTS · ${_batchResults.length} FILES</div><table class="report-table"><thead><tr><th>File</th><th>F1</th><th>P</th><th>R</th><th>TP/Trans</th><th>Rows</th></tr></thead><tbody>${tbRows}</tbody></table><div style="font-size:10px;margin-top:5px">Mean F1: <b style="color:#40cc90">${(mean*100).toFixed(1)}%</b> (${f1s.length} labeled files)</div>`;
+  document.getElementById('reportModal').classList.add('show');
+}
+
 // ── Startup ────────────────────────────────────────────────
 (function(){
   onDeviceChange(); // initialise panel visibility for default device
@@ -2587,10 +3128,12 @@ function _handleExperiment(d){
   if(ds) ds.addEventListener('change',()=>setTimeout(saveSettingsLS,0));
   // Auto-save settings every 60s
   setInterval(saveSettingsLS,60000);
-  // Show welcome hint on first load
+  // Show onboarding on first visit (no saved config)
   if(!localStorage.getItem('eeg_cfg')){
-    setTimeout(()=>showToast('Press ? for keyboard shortcuts and guide','#6480cc'),1800);
+    setTimeout(()=>startOnboarding(), 1200);
   }
+  // CH toggle btn hidden by default until CSV with >1 ch is loaded
+  const chBtn=document.getElementById('chToggleBtn'); if(chBtn) chBtn.style.display='none';
 })();
 </script>
 </body>
