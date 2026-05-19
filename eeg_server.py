@@ -379,10 +379,15 @@ def _add_vpattern(frame, detector, eeg_seg=None):
     if detector is None:
         return
     conc = frame.get('bands', {}).get('concentration', 50.0)
-    if eeg_seg is not None and hasattr(detector, 'push') and hasattr(detector, '_ring'):
+    if hasattr(detector, '_buf'):
+        # Rule-based scalar detector (VPatternRuleBased)
+        result = detector.push(conc)
+    elif eeg_seg is not None and hasattr(detector, '_ring'):
+        # ML detector with EEG segment available
         result = detector.push(eeg_seg, conc)
     else:
-        result = detector.push(conc) if hasattr(detector, '_buf') else detector.push(eeg_seg, conc)
+        # ML detector called without EEG segment (stream_sim/stream_mental) — return inactive
+        result = {'v_prob': 0.0, 'v_active': False, 'rule_based': False}
     frame['vpattern'] = result
 
 async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preprocess=False,
