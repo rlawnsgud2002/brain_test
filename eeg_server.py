@@ -318,21 +318,26 @@ async def _tick_experiment(ws, exp_holder, bands):
     status = runner.tick(bands)
     state  = status.get('state')
 
+    async def _send(payload):
+        try:
+            await ws.send(json.dumps(payload))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
     if status.get('transition') or state == 'done':
-        await ws.send(json.dumps({'type': 'experiment', **status}))
+        await _send({'type': 'experiment', **status})
         if state == 'done':
             path = runner.save()
             runner.export_csv(path.replace('.json', '.csv'))
-            await ws.send(json.dumps({'type': 'experiment', 'state': 'saved', 'path': path,
-                                      'summary': runner._summary()}))
+            await _send({'type': 'experiment', 'state': 'saved', 'path': path,
+                         'summary': runner._summary()})
             print(f"[EXP] Experiment done. Saved → {path}")
     else:
-        # Send progress tick every ~1s (throttle by checking remaining changes by ≥1)
         remaining = status.get('remaining', 0)
         last_rem  = getattr(runner, '_last_sent_remaining', None)
         if last_rem is None or abs(last_rem - remaining) >= 1.0:
             runner._last_sent_remaining = remaining
-            await ws.send(json.dumps({'type': 'experiment', **status}))
+            await _send({'type': 'experiment', **status})
 
 async def _push_cal(ws, cal_holder, bands):
     """Feed bands to calibrator; send progress every ~1s, transition/done immediately."""
@@ -342,26 +347,30 @@ async def _push_cal(ws, cal_holder, bands):
     status = cal.push(bands)
     state  = status.get('state')
 
+    async def _send(payload):
+        try:
+            await ws.send(json.dumps(payload))
+        except websockets.exceptions.ConnectionClosed:
+            pass
+
     if status.get('transition') or state == 'done':
-        await ws.send(json.dumps({'type': 'calibration', **status}))
+        await _send({'type': 'calibration', **status})
         if state == 'done':
             STATE['settings'].update(cal.to_settings())
-            # Store relax-phase Engagement Index as baseline for relative concentration
             r = cal._result or {}
             rb = r.get('relax', {}).get('bands', {})
             if rb:
                 ei_base = rb.get('beta', 1) / (rb.get('alpha', 1) + rb.get('theta', 1) + 1e-9)
                 STATE['baseline'] = {'engagement_index': round(ei_base, 4)}
                 print(f"[CAL] Baseline EI set: {STATE['baseline']['engagement_index']:.4f}")
-            await ws.send(json.dumps({'type': 'settings', 'settings': STATE['settings']}))
+            await _send({'type': 'settings', 'settings': STATE['settings']})
             print(f"[CAL] {cal.summary()}")
     else:
-        # Send progress every ~1s
         remaining = status.get('remaining', 0)
         last_rem  = getattr(cal, '_last_sent_remaining', None)
         if last_rem is None or abs(last_rem - remaining) >= 1.0:
             cal._last_sent_remaining = remaining
-            await ws.send(json.dumps({'type': 'calibration', **status}))
+            await _send({'type': 'calibration', **status})
 
 def _add_vpattern(frame, detector, eeg_seg=None):
     """Attach V-pattern detection result to a frame dict in-place."""
@@ -380,6 +389,9 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
     with open(dat_file, 'rb') as f:
         data = pickle.load(f, encoding='latin1')
 
+    n_trials = data['data'].shape[0]
+    if trial >= n_trials:
+        raise ValueError(f"Trial {trial} out of range — file has {n_trials} trials (0–{n_trials-1})")
     eeg_all = data['data'][trial, :32, :]
     labels  = data['labels'][trial]
     emotiv  = eeg_all[DEAP_IDX, :]
@@ -761,8 +773,9 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
                     continue
                 row = pkt['eeg']
                 for ci, col_i in enumerate(ch_order):
-                    if col_i is not None and col_i < len(row):
-                        buf[ci].append(float(row[col_i]))
+                    # Always append so all 14 channels stay length-synchronized
+                    val = float(row[col_i]) if (col_i is not None and col_i < len(row)) else 0.0
+                    buf[ci].append(val)
 
                 # Safety cap: discard oldest samples if buffer grows too large
                 if len(buf[0]) > COMPUTE_WIN * 2:

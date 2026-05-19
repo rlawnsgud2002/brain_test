@@ -1125,13 +1125,13 @@ function loadCSV(input) {
       const colStats = colsToUse.map(col => {
         const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
         let mn=vs[0], mx=vs[0]; for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}
-        return { col, mn, rng: mx - mn || 1 };
+        return { col, mn, rng: mx - mn }; // rng=0 when flat — handled below as 50
       });
       if (!colStats.length) { showToast('No numeric columns found', '#ff8040'); return; }
 
       CFG.csvData = rows.map(r => {
         const normVals = colStats.map(({col,mn,rng}) => {
-          const v = parseFloat(r[col]); return isNaN(v) ? 50 : ((v-mn)/rng)*100;
+          const v = parseFloat(r[col]); return isNaN(v) ? 50 : (rng > 0 ? ((v-mn)/rng)*100 : 50);
         });
         return {
           val: normVals.reduce((a,b)=>a+b,0)/normVals.length,
@@ -1315,13 +1315,13 @@ function _parseCSVText(text, filename) {
       const colStats = chCands.map(col => {
         const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
         let mn=vs[0], mx=vs[0]; for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}
-        return { col, mn, rng: mx - mn || 1 };
+        return { col, mn, rng: mx - mn }; // rng=0 when flat — handled below as 50
       });
       if (!colStats.length) { showToast('No numeric columns found', '#ff8040'); return; }
 
       CFG.csvData = rows.map(r => {
         const normVals = colStats.map(({col,mn,rng}) => {
-          const v = parseFloat(r[col]); return isNaN(v) ? 50 : ((v-mn)/rng)*100;
+          const v = parseFloat(r[col]); return isNaN(v) ? 50 : (rng > 0 ? ((v-mn)/rng)*100 : 50);
         });
         return {
           val: normVals.reduce((a,b)=>a+b,0)/normVals.length,
@@ -3721,8 +3721,8 @@ function runBatchCSV(input){
         else cols=nCols;
         const lblCol=hdrs.find(h=>/^label$/i.test(h));
         if(!lblCol){_batchResults.push({name:file.name,f1:null,reason:'no label col'});nextFile();return;}
-        const cStats=cols.map(col=>{const vs=rows.map(r=>parseFloat(r[col])).filter(v=>!isNaN(v));let mn=vs[0],mx=vs[0];for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}return{col,mn,rng:mx-mn||1};});
-        const data=rows.map(r=>{const nv=cStats.map(({col,mn,rng})=>{const v=parseFloat(r[col]);return isNaN(v)?50:((v-mn)/rng)*100;});return{val:nv.reduce((a,b)=>a+b,0)/nv.length,label:(r[lblCol]||'').trim().toLowerCase()};}).filter(d=>!isNaN(d.val));
+        const cStats=cols.map(col=>{const vs=rows.map(r=>parseFloat(r[col])).filter(v=>!isNaN(v));let mn=vs[0],mx=vs[0];for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}return{col,mn,rng:mx-mn};});
+        const data=rows.map(r=>{const nv=cStats.map(({col,mn,rng})=>{const v=parseFloat(r[col]);return isNaN(v)?50:(rng>0?((v-mn)/rng)*100:50);});return{val:nv.reduce((a,b)=>a+b,0)/nv.length,label:(r[lblCol]||'').trim().toLowerCase()};}).filter(d=>!isNaN(d.val));
         const cs=Math.max(1,Math.round(hz/10*(CFG.csvSpeed||1)));
         const trans=[];
         for(let i=1;i<data.length;i++){const p=data[i-1].label,c=data[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))trans.push(Math.floor(i/cs)*0.1);}
