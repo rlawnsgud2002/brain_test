@@ -2549,7 +2549,7 @@ function showReport(){
     ${snLabel}
     <div class="report-stat"><span>Duration</span><span>${Math.floor(dur/60)}m ${dur%60}s</span></div>
     <div class="report-stat"><span>Device</span><span>${getProf().label}</span></div>
-    <div class="report-stat"><span>Data Source</span><span>${(CFG.dataSource==='csv'||CFG.dataSource==='csv_done')?(CFG.csvLastFile||'CSV'):document.getElementById('srcSel').value.toUpperCase()}</span></div>
+    <div class="report-stat"><span>Data Source</span><span>${(CFG.dataSource==='csv'||CFG.dataSource==='csv_done')?escH(CFG.csvLastFile||'CSV'):escH(document.getElementById('srcSel').value.toUpperCase())}</span></div>
     ${(CFG.dataSource==='csv'||CFG.dataSource==='csv_done')&&CFG.csvCols>1?`<div class="report-stat"><span>CSV Channels</span><span>${CFG.csvCols}ch ensembled · ${CFG.csvHz}Hz</span></div>`:''}
     <div class="report-stat"><span>Thresholds</span><span>Low=${CFG.thLow}% High=${CFG.thHigh}% dt=${CFG.dt}s</span></div>
     <div style="margin:8px 0 3px;font-size:9px;color:#6480cc;letter-spacing:1px">CONCENTRATION</div>
@@ -3386,7 +3386,8 @@ function drawVHistogram() {
   const intervals=[];
   for(let i=1;i<evts.length;i++) intervals.push((evts[i].t-evts[i-1].t)/1000);
   if(!intervals.length){cv.parentElement.style.display='none';return;}
-  const mx=Math.max(...intervals)||1, mn=0;
+  // reduce avoids V8 spread argument limit (~65536) on long sessions
+  const mx=intervals.reduce((a,b)=>b>a?b:a,0)||1, mn=0;
   const nBins=Math.min(12,Math.max(1,intervals.length));
   const binW=(mx-mn)/nBins||1;
   const bins=new Array(nBins).fill(0);
