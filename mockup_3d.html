@@ -225,6 +225,13 @@
       button       { font-size:9px; padding:5px 6px; }
       .center .panel-box { width:calc(100vw - 316px); }
     }
+    @media (max-width:420px) {
+      body { flex-direction:column; overflow-x:hidden; }
+      .left-panel,.right-panel { width:100%; max-width:100%; }
+      .center { width:100%; }
+      .center .panel-box { width:calc(100vw - 16px); }
+      #reportModal .modal-box, #historyModal .modal-box { width:100vw; border-radius:0; max-height:100vh; }
+    }
   </style>
 </head>
 <body>
@@ -405,7 +412,7 @@
       <!-- Speed control -->
       <div style="display:flex;align-items:center;gap:5px;margin-top:5px">
         <span style="font-size:8px;color:#3a5070;letter-spacing:1px;white-space:nowrap">SPEED</span>
-        <select id="csvSpeedSel" onchange="CFG.csvSpeed=parseFloat(this.value)" style="flex:1;font-size:9px;padding:2px">
+        <select id="csvSpeedSel" onchange="CFG.csvSpeed=Math.max(0.25,parseFloat(this.value)||1)" style="flex:1;font-size:9px;padding:2px">
           <option value="1">1× (real-time)</option>
           <option value="2">2×</option>
           <option value="5" selected>5×</option>
@@ -838,15 +845,19 @@ function wsConnect() {
     try {
       const d = JSON.parse(e.data);
       if (d.type === 'eeg') {
-        d.channels.forEach((v,i) => { CFG.vals[i]=Math.max(0,Math.min(100,v)); });
+        if(Array.isArray(d.channels)) d.channels.forEach((v,i) => {
+          if(i<CFG.vals.length&&isFinite(v)) CFG.vals[i]=Math.max(0,Math.min(100,v));
+        });
         if (d.bands) {
+          const _nb=(v,fb=null)=>(v!=null&&isFinite(v))?v:fb;
           Object.assign(bands, {
-            delta:d.bands.delta, theta:d.bands.theta, alpha:d.bands.alpha,
-            beta:d.bands.beta, gamma:d.bands.gamma,
-            engagement_index:d.bands.engagement_index??null,
-            faa:d.bands.faa??null,
-            concentration:d.bands.concentration??null,
-            meditation:d.bands.meditation??null
+            delta:_nb(d.bands.delta,50), theta:_nb(d.bands.theta,40),
+            alpha:_nb(d.bands.alpha,50), beta:_nb(d.bands.beta,50),
+            gamma:_nb(d.bands.gamma,30),
+            engagement_index:_nb(d.bands.engagement_index),
+            faa:_nb(d.bands.faa),
+            concentration:_nb(d.bands.concentration),
+            meditation:_nb(d.bands.meditation)
           });
           bands.emg_warn    = d.artifacts?.emg_warn??false;
           bands.poor_signal = d.artifacts?.poor_signal??0;
@@ -959,8 +970,9 @@ function onSourceChange() {
     clearTimeout(wsReTimer); CFG.dataSource='sim'; wsSetStatus('offline');
     bands.engagement_index=null; bands.faa=null; bands.concentration=null;
     bands.meditation=null; bands.poor_signal=0; bands.emg_warn=false;
-    // Clean up CSV playback state so V-alerts are not permanently suppressed
+    // Clean up CSV + V-pattern state fully
     CFG.csvBatchMode=false; CFG.csvData=null; CFG.csvIdx=0;
+    CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0;
     document.getElementById('csvProgress').style.display='none';
     document.getElementById('csvInfoRow').style.display='none';
     const lb=document.getElementById('csvLabelBadge'); if(lb) lb.style.display='none';
@@ -1115,6 +1127,7 @@ function loadCSV(input) {
 
 function replayCSV() {
   if(!CFG.csvData || !CFG.csvData.length) return;
+  if(CFG.dataSource==='csv'){showToast('재생 중입니다 — ⏸ 버튼으로 일시정지하거나 완료까지 기다려주세요','#ffcc44');return;}
   if(EXP.active) stopExperiment();
   _sessionSaved = false;
   CFG.csvPaused = false;
@@ -2268,7 +2281,7 @@ function drawTopo(cv) {
 // ══════════════════════════════════════════════════════════
 let frame=0;
 function animate(){
-  requestAnimationFrame(animate); frame++;
+  requestAnimationFrame(animate); frame=(frame+1)&0x7FFFFFFF;
   if(frame%6===0){
     const now=performance.now();
     if(CFG._lastStepTime>0) CFG._dt=Math.max(0.05,Math.min(1,(now-CFG._lastStepTime)/1000));
@@ -2392,7 +2405,8 @@ function showReport(){
     ?'<div style="font-size:10px;color:#6480cc;padding:5px 0">No peaks yet</div>'
     :`<table class="report-table"><thead><tr><th>Time</th><th>Peak Concentration</th></tr></thead><tbody>${top5.map(p=>`<tr><td>${fmtTime(p.t)}</td><td style="color:#ffaa44">${p.conc.toFixed(1)}%</td></tr>`).join('')}</tbody></table>`;
   // CSV validation section
-  const hasCsvLabels = CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null;
+  const hasCsvLabels = CFG.csvData && CFG.csvData.length &&
+    CFG.csvData.some(d => d.label !== null && d.label !== '');
   const csvSec = document.getElementById('csvValidationSection');
   if(hasCsvLabels) {
     csvSec.style.display = 'block';
@@ -2457,8 +2471,8 @@ function showReport(){
 
 function drawReportTimeline() {
   const hist = CFG.history;
-  if(!hist.length) return;
   const wrap = document.getElementById('reportTimelineWrap');
+  if(!hist.length){if(wrap)wrap.style.display='none';return;}
   if(wrap) wrap.style.display = 'block';
   const cv = document.getElementById('reportTimeline');
   if(!cv) return;
@@ -2620,7 +2634,8 @@ function recalcValidation() {
 }
 
 function exportCSV(){
-  const hasCsvLabels = CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null;
+  const hasCsvLabels = CFG.csvData && CFG.csvData.length &&
+    CFG.csvData.some(d => d.label !== null && d.label !== '');
   const dt = parseFloat(document.getElementById('dtTolerance')?.value) || 1.0;
   let labelTransitions = [];
   if(hasCsvLabels) {
@@ -2646,7 +2661,7 @@ function exportCSV(){
     } else { rows.push(base); }
   });
   const histRows=['SessionTime(s),Concentration(%)'];
-  const histOffset=Math.max(0,(Date.now()-RPT.sessionStart)/1000-(CFG.history.length-1)*CFG._dt);
+  const histOffset=CFG.history.length>1?Math.max(0,(Date.now()-RPT.sessionStart)/1000-(CFG.history.length-1)*CFG._dt):0;
   CFG.history.forEach((v,i)=>histRows.push(`${(histOffset+i*CFG._dt).toFixed(2)},${v.toFixed(1)}`));
   const a=document.createElement('a');
   const csvUrl=URL.createObjectURL(new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')],{type:'text/csv'}));
@@ -3073,10 +3088,11 @@ function drawVHistogram() {
 const _IDB={db:null};
 function _openIDB(cb){
   if(_IDB.db){cb(_IDB.db);return;}
+  if(!window.indexedDB){showToast('IndexedDB not supported (private mode?)','#ff8040');return;}
   const req=indexedDB.open('eeg_sessions',1);
   req.onupgradeneeded=e=>e.target.result.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
   req.onsuccess=e=>{_IDB.db=e.target.result;cb(_IDB.db);};
-  req.onerror=()=>showToast('IndexedDB unavailable','#ff8040');
+  req.onerror=e=>showToast('IndexedDB 오류: '+(e.target.error||'unavailable'),'#ff8040');
 }
 let _sessionSaved = false; // guard against duplicate saves per session
 function saveSessionHistory(){
@@ -3219,6 +3235,9 @@ function _buildCompareTable(sel){
 function clearHistory(){
   _openIDB(db=>{
     db.transaction('sessions','readwrite').objectStore('sessions').clear();
+    _histSessions=[];
+    document.getElementById('histCompareSection').style.display='none';
+    document.getElementById('compareBtn').style.display='none';
     showToast('Session history cleared','#ffcc44');
     document.getElementById('historyList').innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet.</div>';
   });
@@ -3281,7 +3300,12 @@ function runBatchCSV(input){
         const hz=hzH&&!isNaN(parseFloat(rows[0][hzH]))?parseFloat(rows[0][hzH]):128;
         const nCols=hdrs.filter(h=>!/^label$/i.test(h)&&h!==hzH&&!isNaN(parseFloat(rows[0][h])));
         const isKag=nCols.some(c=>/^mean_\d_a$/i.test(c));
-        const cols=isKag?nCols.filter(c=>/^mean_\d_a$/i.test(c)):nCols;
+        const _EPOC_B=['AF3','AF4','F7','F3','F4','F8','FC5','FC6','T7','T8','P7','P8','O1','O2'];
+        const isXav=!isKag&&_EPOC_B.filter(e=>hdrs.some(h=>h.trim().split(/\s/)[0].toLowerCase()===e.toLowerCase())).length>=10;
+        let cols;
+        if(isKag) cols=nCols.filter(c=>/^mean_\d_a$/i.test(c));
+        else if(isXav) cols=_EPOC_B.map(e=>hdrs.find(h=>h.trim().split(/\s/)[0].toLowerCase()===e.toLowerCase())).filter(Boolean);
+        else cols=nCols;
         const lblCol=hdrs.find(h=>/^label$/i.test(h));
         if(!lblCol){_batchResults.push({name:file.name,f1:null,reason:'no label col'});nextFile();return;}
         const cStats=cols.map(col=>{const vs=rows.map(r=>parseFloat(r[col])).filter(v=>!isNaN(v));let mn=vs[0],mx=vs[0];for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}return{col,mn,rng:mx-mn||1};});

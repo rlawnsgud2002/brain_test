@@ -200,6 +200,8 @@ def preprocess(eeg_14ch, notch_hz=50, blink_thresh_uv=80.0):
 
 def bandpower(signal, fs, fmin, fmax):
     nperseg = min(len(signal), fs * 2)
+    if nperseg < 4:
+        return 0.0
     freqs, psd = welch(signal, fs=fs, nperseg=nperseg)
     mask = (freqs >= fmin) & (freqs <= fmax)
     return float(np.mean(psd[mask])) if mask.any() else 0.0
@@ -605,8 +607,17 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
       5. subscribe eeg  → receive raw EEG frames
     """
     CORTEX_URL = 'wss://localhost:6868'
-    CLIENT_ID  = 'YOUR_CLIENT_ID'    # replace after Emotiv developer registration
-    CLIENT_SEC = 'YOUR_CLIENT_SECRET'
+    # Credentials from env vars or command-line args; fall back to placeholder
+    CLIENT_ID  = STATE.get('emotiv_client_id')  or os.environ.get('EMOTIV_CLIENT_ID',  'YOUR_CLIENT_ID')
+    CLIENT_SEC = STATE.get('emotiv_client_sec') or os.environ.get('EMOTIV_CLIENT_SEC', 'YOUR_CLIENT_SECRET')
+
+    if CLIENT_ID == 'YOUR_CLIENT_ID':
+        await ws.send(json.dumps({'type':'error',
+            'message':'Emotiv credentials not set. Run with --emotiv-id YOUR_ID --emotiv-secret YOUR_SECRET  '
+                      'or set env EMOTIV_CLIENT_ID / EMOTIV_CLIENT_SEC. '
+                      'Register at emotiv.com/developer → falling back to simulation.'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
+        return
 
     print(f"[EMOTIV] Connecting to Cortex API: {CORTEX_URL}")
     await ws.send(json.dumps({'type':'status',
@@ -944,7 +955,32 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             finally:
                 _self.FS = _save_fs
 
-            bands_out = compute_frame(eeg_eeg, fs=FS_MUSE)
+            # compute_frame expects 14ch; use inline 4ch band computation for Muse
+            nch4 = clean.shape[0]
+            _bp = lambda pos, lo, hi: bandpower(clean[pos], FS_MUSE, lo, hi)
+            _g_delta = float(np.mean([_bp(i,1,4)  for i in range(nch4)]))
+            _g_theta = float(np.mean([_bp(i,4,8)  for i in range(nch4)]))
+            _g_alpha = float(np.mean([_bp(i,8,12) for i in range(nch4)]))
+            _g_beta  = float(np.mean([_bp(i,12,30)for i in range(nch4)]))
+            _g_gamma = float(np.mean([_bp(i,30,45)for i in range(nch4)]))
+            _ei  = _g_beta / max(_g_alpha + _g_theta, 1e-9)
+            _tot = max(_g_delta+_g_theta+_g_alpha+_g_beta+_g_gamma, 1e-9)
+            _conc = float(np.clip(_ei * 20 + 40, 0, 100))
+            # FAA: ln(right_alpha) - ln(left_alpha) using AF8(idx1) / AF7(idx0)
+            _faa_l = bandpower(clean[0], FS_MUSE, 8, 12)  # AF7 → TP9 at idx0
+            _faa_r = bandpower(clean[1], FS_MUSE, 8, 12)  # AF8 at idx1 (MUSE_EEG_IDX order)
+            _faa = float(np.clip((np.log(_faa_r+1e-9)-np.log(_faa_l+1e-9))/np.log(100), -0.5, 0.5))
+            bands_out = {
+                'delta':  round(_g_delta/_tot*100),
+                'theta':  round(_g_theta/_tot*100),
+                'alpha':  round(_g_alpha/_tot*100),
+                'beta':   round(_g_beta /_tot*100),
+                'gamma':  round(_g_gamma/_tot*100),
+                'concentration':    round(_conc, 2),
+                'engagement_index': round(_ei,   4),
+                'faa':              round(_faa,  4),
+                'meditation': None,
+            }
 
             # Build 6-channel vals (ref channels get avg value)
             avg_val = float(np.mean([bands_out['concentration']] * 4))
@@ -1167,6 +1203,8 @@ def main():
                         help='Disable bandpass/notch/blink filters (raw signal)')
     parser.add_argument('--model', default='models/vpattern_model.pt',
                         help='Path to trained V-pattern model (default: models/vpattern_model.pt)')
+    parser.add_argument('--emotiv-id',     default=None, help='Emotiv Cortex API Client ID')
+    parser.add_argument('--emotiv-secret', default=None, help='Emotiv Cortex API Client Secret')
     args = parser.parse_args()
 
     if not NUMPY_OK and args.source in ('deap','mental'):
@@ -1178,6 +1216,10 @@ def main():
 
     if args.serial_port:
         STATE['serial_port'] = args.serial_port
+    if args.emotiv_id:
+        STATE['emotiv_client_id']  = args.emotiv_id
+    if args.emotiv_secret:
+        STATE['emotiv_client_sec'] = args.emotiv_secret
 
     handler = make_handler(args.source, args.file, args.trial, args.speed,
                            notch_hz=args.notch, no_preprocess=args.no_preprocess,
