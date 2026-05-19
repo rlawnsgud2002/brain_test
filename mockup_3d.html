@@ -3406,14 +3406,20 @@ function drawVHistogram() {
 // ══════════════════════════════════════════════════════════
 //  SESSION HISTORY (IndexedDB)
 // ══════════════════════════════════════════════════════════
-const _IDB={db:null};
+const _IDB={db:null, _pending:false, _queue:[]};
 function _openIDB(cb){
   if(_IDB.db){cb(_IDB.db);return;}
   if(!window.indexedDB){showToast('IndexedDB not supported (private mode?)','#ff8040');return;}
+  _IDB._queue.push(cb);
+  if(_IDB._pending) return; // already opening — queue will be flushed on success
+  _IDB._pending=true;
   const req=indexedDB.open('eeg_sessions',1);
   req.onupgradeneeded=e=>e.target.result.createObjectStore('sessions',{keyPath:'id',autoIncrement:true});
-  req.onsuccess=e=>{_IDB.db=e.target.result;cb(_IDB.db);};
-  req.onerror=e=>showToast('IndexedDB 오류: '+(e.target.error||'unavailable'),'#ff8040');
+  req.onsuccess=e=>{
+    _IDB.db=e.target.result; _IDB._pending=false;
+    _IDB._queue.forEach(fn=>fn(_IDB.db)); _IDB._queue=[];
+  };
+  req.onerror=e=>{_IDB._pending=false;_IDB._queue=[];showToast('IndexedDB 오류: '+(e.target.error||'unavailable'),'#ff8040');};
 }
 let _sessionSaved = false; // guard against duplicate saves per session
 function saveSessionHistory(){
