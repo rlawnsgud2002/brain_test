@@ -655,6 +655,7 @@
       <div class="help-row"><span class="help-desc">Scalp topography</span><span class="help-desc" style="color:#5070a0">Interpolated activity map</span></div>
       <div class="help-row"><span class="help-desc">Contact Quality</span><span class="help-desc" style="color:#5070a0">Electrode impedance (green=good)</span></div>
       <div class="help-row"><span class="help-desc">V-Pattern detection</span><span class="help-desc" style="color:#5070a0">Drop below thLow → rise above thHigh</span></div>
+      <div class="help-row"><span class="help-desc">Adjust thLow / thHigh</span><span class="help-desc" style="color:#5070a0">Drag dashed lines on the graph</span></div>
     </div>
     <div class="help-section">
       <h4>CSV BATCH VALIDATION</h4>
@@ -1492,6 +1493,81 @@ canvas3d.addEventListener('touchend',e=>{if(e.touches.length===0){lastTouch=null
 canvas3d.addEventListener('dblclick',()=>{tRotX=0.3;tRotY=Math.PI;tZoom=3.5;});
 
 // ══════════════════════════════════════════════════════════
+//  CONCENTRATION GRAPH — INTERACTIVE THRESHOLD DRAG
+//  Drag the thLow (blue) / thHigh (orange) dashed lines
+// ══════════════════════════════════════════════════════════
+(function(){
+  const gc = document.getElementById('graphCanvas');
+  const SNAP = 9; // px proximity to snap to line
+  const PAD  = {t:4, b:13, l:30, r:5};
+  let dragTarget = null; // 'low' | 'high' | null
+
+  function _pct(clientY){
+    const r=gc.getBoundingClientRect(), H=r.height;
+    const iH=H-PAD.t-PAD.b;
+    return Math.max(0,Math.min(100,(1-(clientY-r.top-PAD.t)/iH)*100));
+  }
+  function _yOf(pct){
+    const r=gc.getBoundingClientRect(), H=r.height;
+    return r.top + PAD.t + (1-pct/100)*(H-PAD.t-PAD.b);
+  }
+  function _nearest(clientY){
+    const dLow  = Math.abs(clientY - _yOf(CFG.thLow));
+    const dHigh = Math.abs(clientY - _yOf(CFG.thHigh));
+    if(dLow<=SNAP&&dLow<=dHigh)  return 'low';
+    if(dHigh<=SNAP&&dHigh<dLow)  return 'high';
+    return null;
+  }
+  function _applyDrag(clientY){
+    const pct = Math.round(_pct(clientY));
+    if(dragTarget==='low'){
+      const v = Math.max(5, Math.min(CFG.thHigh-5, pct));
+      CFG.thLow = v;
+      const el=document.getElementById('thLow'); if(el) el.value=v;
+      const lv=document.getElementById('tlv');   if(lv) lv.textContent=v+'%';
+    } else {
+      const v = Math.max(CFG.thLow+5, Math.min(95, pct));
+      CFG.thHigh = v;
+      const el=document.getElementById('thHigh'); if(el) el.value=v;
+      const tv=document.getElementById('thv');    if(tv) tv.textContent=v+'%';
+    }
+  }
+  gc.addEventListener('mousemove', e=>{
+    if(dragTarget){ _applyDrag(e.clientY); return; }
+    gc.style.cursor = _nearest(e.clientY) ? 'ns-resize' : 'default';
+  });
+  gc.addEventListener('mousedown', e=>{
+    const t=_nearest(e.clientY);
+    if(t){ dragTarget=t; e.preventDefault(); }
+  });
+  gc.addEventListener('mouseleave', ()=>{ if(!dragTarget) gc.style.cursor='default'; });
+  window.addEventListener('mouseup', ()=>{
+    if(dragTarget){
+      // Push updated settings to server
+      if(ws&&ws.readyState===WebSocket.OPEN)
+        ws.send(JSON.stringify({type:'settings',settings:{thLow:CFG.thLow,thHigh:CFG.thHigh,dt:CFG.dt}}));
+      dragTarget=null;
+      gc.style.cursor='default';
+    }
+  });
+  // Touch support
+  gc.addEventListener('touchstart', e=>{
+    const t=e.touches[0], near=_nearest(t.clientY);
+    if(near){ dragTarget=near; e.preventDefault(); }
+  },{passive:false});
+  gc.addEventListener('touchmove', e=>{
+    if(dragTarget){ _applyDrag(e.touches[0].clientY); e.preventDefault(); }
+  },{passive:false});
+  gc.addEventListener('touchend', ()=>{
+    if(dragTarget){
+      if(ws&&ws.readyState===WebSocket.OPEN)
+        ws.send(JSON.stringify({type:'settings',settings:{thLow:CFG.thLow,thHigh:CFG.thHigh,dt:CFG.dt}}));
+      dragTarget=null;
+    }
+  });
+})();
+
+// ══════════════════════════════════════════════════════════
 //  TOOLTIP — device-aware raycaster
 // ══════════════════════════════════════════════════════════
 const raycaster=new THREE.Raycaster(),mouse2d=new THREE.Vector2(),tooltip=document.getElementById('tooltip');
@@ -1980,13 +2056,18 @@ function drawGraph(){
     ctx.fillStyle='rgba(255,160,40,0.06)'; ctx.fillRect(pL,y1,W-pL-pR,y2-y1);
   }
 
-  [[CFG.thLow,'rgba(80,120,255,0.5)','LOW'],[CFG.thHigh,'rgba(255,110,50,0.5)','HIGH']].forEach(([th,col,lbl])=>{
+  [[CFG.thLow,'rgba(80,120,255,0.7)','LOW ▲ drag'],[CFG.thHigh,'rgba(255,110,50,0.7)','HIGH ▲ drag']].forEach(([th,col,lbl])=>{
     const y=pT+(1-th/100)*(H-pT-pB);
-    ctx.strokeStyle=col; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+    ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
     ctx.beginPath(); ctx.moveTo(pL,y); ctx.lineTo(W-pR,y); ctx.stroke();
     ctx.setLineDash([]);
-    ctx.font='6px Courier New'; ctx.fillStyle=col; ctx.textAlign='left';
-    ctx.fillText(lbl,pL+2,y-2);
+    // Drag handle pill at left edge
+    const py=Math.max(pT+5,Math.min(H-pB-5,y));
+    ctx.fillStyle=col.replace('0.7','0.2');
+    ctx.beginPath(); ctx.roundRect?ctx.roundRect(pL,py-5,22,10,3):ctx.rect(pL,py-5,22,10);
+    ctx.fill();
+    ctx.font='bold 6px Courier New'; ctx.fillStyle=col; ctx.textAlign='left';
+    ctx.fillText(th+'%',pL+2,py+4);
   });
   ctx.setLineDash([]);
 
@@ -3382,7 +3463,8 @@ function _drawCompareChart(sel){
   });
 }
 function _drawF1Trend(pts){
-  // pts: array of sessions with .f1 (newest first, chronologically reversed)
+  if(!pts||pts.length<2) return;
+  // pts: array of sessions with .f1 (newest first, reverse for chronological order)
   const cv=document.getElementById('f1TrendCanvas');
   if(!cv) return;
   const W=cv.offsetWidth||cv.closest('.modal-box')?.clientWidth-32||300;
@@ -3456,6 +3538,7 @@ function _buildCompareTable(sel){
     ['V-events',...sel.map(s=>s.vCount)],
     ['thLow/thHigh',...sel.map(s=>`${s.thLow}/${s.thHigh}`)],
     ['dt (arm)',...sel.map(s=>s.dt+'s')],
+    ['F1 Score',...sel.map(s=>s.f1!=null?`<b style="color:${s.f1>=0.7?'#40cc90':s.f1>=0.4?'#ffcc44':'#ff8060'}">${(s.f1*100).toFixed(0)}%</b>`:'—')],
     ['Device',...sel.map(s=>escH(s.device))],
     ['File',...sel.map(s=>escH(s.file||'—'))],
   ];
@@ -3467,6 +3550,7 @@ function clearHistory(){
     _histSessions=[];
     document.getElementById('histCompareSection').style.display='none';
     document.getElementById('compareBtn').style.display='none';
+    document.getElementById('f1TrendWrap').style.display='none';
     showToast('Session history cleared','#ffcc44');
     document.getElementById('historyList').innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet.</div>';
   });
