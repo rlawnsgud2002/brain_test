@@ -232,8 +232,8 @@ if TORCH_OK:
             if not self._model_loaded:
                 return {**rb, 'rule_based': True}
 
-            # Accumulate ring buffer
-            t = torch.tensor(eeg_window, dtype=torch.float32).unsqueeze(0)  # (1,14,128)
+            # Accumulate ring buffer; each entry shape (1, n_ch, n_time)
+            t = torch.tensor(eeg_window, dtype=torch.float32, device=self.device).unsqueeze(0)
             self._ring.append(t)
             if len(self._ring) > self.seq_len:
                 self._ring.pop(0)
@@ -241,12 +241,22 @@ if TORCH_OK:
             if len(self._ring) < self.seq_len:
                 return {'v_prob': 0.0, 'v_active': False, 'rule_based': False}
 
-            # (1, seq_len, 1, 14, 128)
-            seq = torch.stack(self._ring, dim=0).unsqueeze(0).unsqueeze(2).to(self.device)
+            # stack → (seq_len, 1, n_ch, n_time); unsqueeze(0) → (1, seq_len, 1, n_ch, n_time)
+            seq = torch.stack(self._ring, dim=0).unsqueeze(0)
             prob = float(self.model.predict_proba(seq)[0])
 
-            self.v_prob   = round(prob, 3)
-            self.v_active = prob > 0.5
+            # Cooldown: prevent re-firing every frame while prob stays > 0.5
+            if not hasattr(self, '_cooldown'):
+                self._cooldown = 0
+            self.v_prob = round(prob, 3)
+            if self._cooldown > 0:
+                self._cooldown -= 1
+                self.v_active = False
+            elif prob > 0.5:
+                self.v_active = True
+                self._cooldown = self.seq_len  # block re-fire for one sequence length
+            else:
+                self.v_active = False
             return {'v_prob': self.v_prob, 'v_active': self.v_active, 'rule_based': False}
 
 

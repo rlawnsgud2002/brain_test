@@ -143,7 +143,7 @@ class ExperimentRunner:
             return self._advance()
 
         remaining = phase.duration - elapsed_phase
-        progress  = elapsed_phase / phase.duration
+        progress  = elapsed_phase / phase.duration if phase.duration > 0 else 1.0
 
         return {**self._status(),
                 'remaining':       round(remaining, 1),
@@ -202,7 +202,10 @@ class ExperimentRunner:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _current_phase(self) -> Phase:
-        return self.phases[self._phase_idx]
+        if 0 <= self._phase_idx < len(self.phases):
+            return self.phases[self._phase_idx]
+        # Sentinel when idx is out of range (post-done state) — avoids IndexError
+        return Phase(name='', duration=0.0, instruction='')
 
     def _advance(self) -> dict:
         self._log_marker('phase_end')

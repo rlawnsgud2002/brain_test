@@ -134,8 +134,10 @@ class Calibrator:
     # ── Internal ──────────────────────────────────────────────────────────────
 
     def _avg(self, buf, key):
-        vals = [b.get(key, 0) for b in buf if key in b]
-        return sum(vals) / len(vals) if vals else 0.0
+        # Treat missing keys as 0 so denominator stays consistent across keys
+        if not buf:
+            return 0.0
+        return sum(b.get(key, 0) for b in buf) / len(buf)
 
     def _compute(self) -> dict:
         """
@@ -175,10 +177,11 @@ class Calibrator:
         bands_focus = {k: self._avg(fb, k)
                        for k in ('delta','theta','alpha','beta','gamma')}
 
-        # Engagement index: beta / (alpha + theta)
+        # Engagement index: beta / (alpha + theta); clamp to sensible range to avoid extremes
         def engagement(bands):
             denom = bands['alpha'] + bands['theta'] + 1e-9
-            return round(bands['beta'] / denom, 3)
+            ratio = bands['beta'] / denom
+            return round(max(0.0, min(10.0, ratio)), 3)
 
         result = {
             'relax': {
