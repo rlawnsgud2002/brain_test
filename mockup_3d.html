@@ -533,6 +533,10 @@
       <div style="margin-top:11px;font-size:9px;color:#6480cc;letter-spacing:1px">PRECISION–RECALL CURVE (dt sweep 0.25–5s)</div>
       <canvas id="rocCanvas" height="120"></canvas>
       <div id="rocAucRow" style="font-size:9px;color:#5070a0;margin-top:3px"></div>
+      <div style="margin-top:6px">
+        <button id="threshOptBtn" onclick="findBestThresholds()" style="font-size:8px;padding:2px 9px;width:auto;margin:0;background:rgba(255,170,40,0.14);border-color:rgba(255,170,40,0.3);color:#ffcc60">⚡ FIND BEST THRESHOLDS</button>
+        <div id="threshGridResult" style="display:none;margin-top:5px"></div>
+      </div>
     </div>
     <!-- 5-fold cross-validation -->
     <div id="cvSection" style="display:none">
@@ -3166,6 +3170,96 @@ function detectVPatternsPure(data, hz, thLow, thHigh, dt, speed) {
     }
   }
   return events;
+}
+
+// ══════════════════════════════════════════════════════════
+//  THRESHOLD GRID SEARCH
+// ══════════════════════════════════════════════════════════
+function findBestThresholds() {
+  if(!CFG.csvData||!CFG.csvData.length||CFG.csvData[0].label===null) return;
+  const btn = document.getElementById('threshOptBtn');
+  if(btn) { btn.disabled=true; btn.textContent='SEARCHING…'; }
+
+  // Build relax→conc transition list once (shared across all candidates)
+  const cs = Math.max(1, Math.round(CFG.csvHz/10*(CFG.csvSpeed||1)));
+  const trans = [];
+  for(let i=1;i<CFG.csvData.length;i++){
+    const p=CFG.csvData[i-1].label, c=CFG.csvData[i].label;
+    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*0.1);
+  }
+  if(!trans.length){
+    if(btn){btn.disabled=false;btn.textContent='⚡ FIND BEST THRESHOLDS';}
+    showToast('No relax→conc transitions found in labels','#ff8060'); return;
+  }
+
+  // Candidate ranges
+  const thLows  = [10,15,20,25,30,35,40,45,50];
+  const thHighs = [50,55,60,65,70,75,80,85,90];
+  const dtCands = [0.5,1,1.5,2,2.5,3,4,5];
+
+  let best = {f1:-1, thLow:CFG.thLow, thHigh:CFG.thHigh, dt:CFG.dt, prec:0, rec:0, tp:0, fp:0, fn:0};
+  const matchDt = parseFloat(document.getElementById('dtTolerance')?.value)||1.0;
+
+  for(const dt of dtCands) {
+    for(const tl of thLows) {
+      for(const th of thHighs) {
+        if(tl >= th - 10) continue; // require at least 10% gap
+        const trigs = detectVPatternsPure(CFG.csvData, CFG.csvHz, tl, th, dt, CFG.csvSpeed);
+        let tp=0; const used=new Set();
+        trans.forEach(ts=>{
+          for(let ti=0;ti<trigs.length;ti++){
+            if(!used.has(ti)&&Math.abs(trigs[ti]-ts)<=matchDt){tp++;used.add(ti);break;}
+          }
+        });
+        const fp=trigs.length-used.size, fn=trans.length-tp;
+        const pr=trigs.length?tp/trigs.length:0, rc=trans.length?tp/trans.length:0;
+        const f1=(pr+rc)>0?2*pr*rc/(pr+rc):0;
+        if(f1>best.f1) best={f1,thLow:tl,thHigh:th,dt,prec:pr,rec:rc,tp,fp,fn};
+      }
+    }
+  }
+
+  // Apply best settings to sliders + CFG
+  if(best.f1 >= 0) {
+    CFG.thLow=best.thLow; CFG.thHigh=best.thHigh; CFG.dt=best.dt;
+    document.getElementById('thLow').value=best.thLow;
+    document.getElementById('thHigh').value=best.thHigh;
+    document.getElementById('dtSlider').value=Math.max(1,Math.min(30,Math.round(best.dt)));
+    document.getElementById('tlv').textContent=best.thLow+'%';
+    document.getElementById('thv').textContent=best.thHigh+'%';
+    document.getElementById('dtv').textContent=best.dt+'s';
+    if(ws&&ws.readyState===WebSocket.OPEN)
+      ws.send(JSON.stringify({type:'settings',settings:{thLow:best.thLow,thHigh:best.thHigh,dt:best.dt,slope:0.3}}));
+    saveSettingsLS();
+    showToast(`Best: thL=${best.thLow} thH=${best.thHigh} dt=${best.dt}s → F1=${(best.f1*100).toFixed(1)}%`,'#40cc90');
+  }
+
+  // Show result
+  const el = document.getElementById('threshGridResult');
+  if(el) {
+    el.style.display='block';
+    if(best.f1 > 0) {
+      const f1col = best.f1>=0.7?'#40cc90':best.f1>=0.4?'#ffcc44':'#ff8060';
+      el.innerHTML=`<div style="font-size:9px;color:#6480cc;letter-spacing:1px;margin-bottom:3px">GRID SEARCH RESULT (${thLows.length}×${thHighs.length}×${dtCands.length} sweep)</div>
+        <div class="report-stat"><span>Best thLow / thHigh</span><span>${best.thLow}% / ${best.thHigh}%</span></div>
+        <div class="report-stat"><span>Best dt window</span><span>${best.dt}s</span></div>
+        <div class="report-stat"><span>F1 Score</span><span style="color:${f1col}">${(best.f1*100).toFixed(1)}%</span></div>
+        <div class="report-stat"><span>Precision / Recall</span><span>${(best.prec*100).toFixed(0)}% / ${(best.rec*100).toFixed(0)}%</span></div>
+        <div class="report-stat"><span>TP / FP / FN</span><span>${best.tp} / ${best.fp} / ${best.fn}</span></div>
+        <div style="font-size:9px;color:#4060aa;margin-top:3px">Settings applied ↑ — re-run CSV to validate</div>`;
+    } else {
+      el.innerHTML=`<div style="font-size:9px;color:#ff8060;margin-top:3px">No valid combination found — check labels or lower the gap requirement</div>`;
+    }
+  }
+
+  // Refresh ROC curve + validation with new thresholds
+  setTimeout(()=>{
+    const rocPts=calcROCPoints(); drawROCCanvas(rocPts);
+    if(rocPts){const b=rocPts.reduce((a,c)=>c.f1>a.f1?c:a);document.getElementById('rocAucRow').textContent=`Best: dt=${b.dt}s F1=${(b.f1*100).toFixed(1)}% P=${(b.prec*100).toFixed(1)}% R=${(b.rec*100).toFixed(1)}`;}
+    recalcValidation();
+  },0);
+
+  if(btn){btn.disabled=false;btn.textContent='⚡ FIND BEST THRESHOLDS';}
 }
 
 // ══════════════════════════════════════════════════════════
