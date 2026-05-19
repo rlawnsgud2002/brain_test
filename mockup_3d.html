@@ -1057,6 +1057,8 @@ function onSourceChange() {
       showToast('TGAM LIVE: python eeg_server.py --source tgam --port COM3', '#ffaa44');
     }
     wsConnect();
+    // ws may still be CONNECTING after wsConnect(); onopen handler in wsConnect() sends source_change.
+    // Only send here if already open (e.g. switching device while connected).
     if(ws&&ws.readyState===WebSocket.OPEN)
       ws.send(JSON.stringify({type:'source_change',source:src}));
   }
@@ -1822,9 +1824,12 @@ function simStep(){
 // ══════════════════════════════════════════════════════════
 let vAlertTimer=null,pulseActive=false,pulseTimer=0;
 
+let _ac=null;
 function beepV(){
   try{
-    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    if(!_ac) _ac=new(window.AudioContext||window.webkitAudioContext)();
+    if(_ac.state==='suspended') _ac.resume();
+    const ac=_ac;
     [[880,0,0.12],[1100,0.08,0.10],[660,0.18,0.14]].forEach(([freq,delay,dur])=>{
       const o=ac.createOscillator(),g=ac.createGain();
       o.connect(g);g.connect(ac.destination);o.frequency.value=freq;
@@ -2913,8 +2918,9 @@ function startExperiment(){
 function _runSimExpPhase(){
   if(!EXP.active) return;
   const proto=EXP._simProto, idx=EXP._simPhaseIdx;
-  if(idx >= proto.length){ CFG._expActive=false; CFG._expTargetConc=null; _expDone(); showToast('Experiment complete','#80ffb0'); showReport(); return; }
+  if(!proto || idx >= proto.length){ CFG._expActive=false; CFG._expTargetConc=null; _expDone(); showToast('Experiment complete','#80ffb0'); showReport(); return; }
   const phase=proto[idx];
+  if(!phase || !(phase.dur > 0)){ EXP._simPhaseIdx++; _runSimExpPhase(); return; }
   // Drive simulation target concentration
   CFG._expTargetConc = phase.targetConc;
   CFG._expActive = true;

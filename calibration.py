@@ -208,6 +208,9 @@ class Calibrator:
 
     def _save(self):
         try:
+            parent = os.path.dirname(self.save_path)
+            if parent:
+                os.makedirs(parent, exist_ok=True)
             with open(self.save_path, 'w') as f:
                 json.dump(self._result, f, indent=2, ensure_ascii=False)
             print(f"[CAL] Saved → {self.save_path}")
@@ -220,8 +223,12 @@ class Calibrator:
         cal = cls(save_path=path)
         if not os.path.exists(path):
             return None
-        with open(path) as f:
-            data = json.load(f)
+        try:
+            with open(path) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"[CAL] Load failed ({path}): {e}")
+            return None
         cal._result = data
         cal._state  = 'done'
         cal.done    = True

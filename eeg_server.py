@@ -393,11 +393,15 @@ def _add_vpattern(frame, detector, eeg_seg=None):
 async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preprocess=False,
                       detector=None, cal_holder=None, exp_holder=None):
     print(f"[DEAP] Loading {dat_file}, trial={trial}, speed={speed}x")
-    with open(dat_file, 'rb') as f:
-        data = pickle.load(f, encoding='latin1')
+    # Load pickle in executor to avoid blocking the event loop on large DEAP files
+    def _load_deap():
+        with open(dat_file, 'rb') as f:
+            return pickle.load(f, encoding='latin1')
+    loop = asyncio.get_event_loop()
+    data = await loop.run_in_executor(None, _load_deap)
 
     n_trials = data['data'].shape[0]
-    if trial >= n_trials:
+    if trial < 0 or trial >= n_trials:
         raise ValueError(f"Trial {trial} out of range — file has {n_trials} trials (0–{n_trials-1})")
     eeg_all = data['data'][trial, :32, :]
     labels  = data['labels'][trial]
@@ -450,7 +454,9 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
         return
 
     print(f"[MENTAL] Loading {csv_file}, speed={speed}x")
-    df = pd.read_csv(csv_file)
+    # Load CSV in executor to avoid blocking the event loop on large files
+    loop = asyncio.get_event_loop()
+    df = await loop.run_in_executor(None, pd.read_csv, csv_file)
     print(f"[MENTAL] Rows: {len(df)}, Columns: {len(df.columns)}")
 
     # Normalize column names
