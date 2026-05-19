@@ -899,7 +899,7 @@ function onDeviceChange() {
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG.csvBatchMode=false; CFG._lastStepTime=0; frame=0;
   const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display='none';
   RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
-  CFG.vals=new Float32Array(14).fill(50); CFG.cqVals=new Float32Array(14).fill(0.88);
+  CFG.vals=new Float32Array(Math.max(14,prof.nCh)).fill(50); CFG.cqVals=new Float32Array(prof.nCh).fill(0.88);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
 
   if (ws){ws.onclose=null;ws.close();ws=null;}
@@ -960,9 +960,12 @@ function onSourceChange() {
     bands.engagement_index=null; bands.faa=null; bands.concentration=null;
     bands.meditation=null; bands.poor_signal=0; bands.emg_warn=false;
     // Clean up CSV playback state so V-alerts are not permanently suppressed
-    CFG.csvBatchMode=false;
+    CFG.csvBatchMode=false; CFG.csvData=null; CFG.csvIdx=0;
     document.getElementById('csvProgress').style.display='none';
+    document.getElementById('csvInfoRow').style.display='none';
     const lb=document.getElementById('csvLabelBadge'); if(lb) lb.style.display='none';
+    const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display='none';
+    document.getElementById('csvReplayBtn').style.display='none';
   } else if(src==='deap') {
     document.getElementById('srcSel').value='sim';
     CFG.dataSource='sim';
@@ -1150,6 +1153,7 @@ function autoTuneParams() {
   const newHigh=Math.round(Math.max(newLow+5, Math.min(95, lo+rng*0.67)));
   let nTrans=0;
   for(let i=1;i<CFG.csvData.length;i++){const p=CFG.csvData[i-1].label,c=CFG.csvData[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))nTrans++;}
+  if(!nTrans){showToast('No relax→conc transitions found — dt set to 15s','#ffcc44');}
   const avgSegSec=CFG.csvData.length/CFG.csvHz/Math.max(1,nTrans*2);
   const newDt=Math.min(30,Math.max(5,Math.round(avgSegSec*0.7)));
   CFG.thLow=newLow;CFG.thHigh=newHigh;CFG.dt=newDt;
@@ -2358,7 +2362,7 @@ function showReport(){
   const bandRow=bkFinal.map(k=>`<td style="color:#8090c0">${((bands[k]||0)/bkTot*100).toFixed(0)}%</td>`).join('');
   // Session label
   const sn=document.getElementById('sessionName');
-  const snLabel=sn&&sn.value?`<div class="report-stat"><span>Session Name</span><span>${sn.value}</span></div>`:'';
+  const snLabel=sn&&sn.value?`<div class="report-stat"><span>Session Name</span><span>${escH(sn.value)}</span></div>`:'';
 
   document.getElementById('reportSummary').innerHTML=`
     ${snLabel}
@@ -2427,6 +2431,8 @@ function showReport(){
       if(rocPts) {
         const best=rocPts.reduce((a,b)=>b.f1>a.f1?b:a);
         document.getElementById('rocAucRow').textContent=`Best: dt=${best.dt}s F1=${(best.f1*100).toFixed(1)}% P=${(best.prec*100).toFixed(1)}% R=${(best.rec*100).toFixed(1)}%`;
+      } else {
+        document.getElementById('rocAucRow').textContent='No relax→conc transitions found in labels — check label column values';
       }
       cvSec.style.display='block';
       const cv=calcCrossVal(5);
@@ -3002,7 +3008,9 @@ function drawROCCanvas(points) {
 // ══════════════════════════════════════════════════════════
 function calcCrossVal(K=5) {
   if(!CFG.csvData||!CFG.csvData.length||CFG.csvData[0].label===null) return null;
-  const n=CFG.csvData.length, foldSz=Math.floor(n/K);
+  const n=CFG.csvData.length;
+  if(n < K*2) return null; // too few rows for meaningful K-fold split
+  const foldSz=Math.floor(n/K);
   const dt=parseFloat(document.getElementById('dtTolerance')?.value)||1.0;
   const f1s=[];
   for(let k=0;k<K;k++){
@@ -3035,8 +3043,9 @@ function drawVHistogram() {
   if(evts.length<2){cv.parentElement.style.display='none';return;}
   const intervals=[];
   for(let i=1;i<evts.length;i++) intervals.push((evts[i].t-evts[i-1].t)/1000);
-  const mx=Math.max(...intervals), mn=0;
-  const nBins=Math.min(12,intervals.length);
+  if(!intervals.length){cv.parentElement.style.display='none';return;}
+  const mx=Math.max(...intervals)||1, mn=0;
+  const nBins=Math.min(12,Math.max(1,intervals.length));
   const binW=(mx-mn)/nBins||1;
   const bins=new Array(nBins).fill(0);
   intervals.forEach(v=>{ const b=Math.min(nBins-1,Math.floor((v-mn)/binW)); bins[b]++; });
@@ -3079,7 +3088,7 @@ function saveSessionHistory(){
   const avgC=RPT._count?+(RPT._sum/RPT._count).toFixed(1):null;
   _openIDB(db=>{
     const tx=db.transaction('sessions','readwrite');
-    tx.onerror=()=>{ _sessionSaved=false; }; // allow retry if IDB write failed
+    tx.onerror=e=>{ _sessionSaved=false; showToast('Session history save failed (storage full?): '+e.target.error,'#ff8040'); };
     tx.objectStore('sessions').add({
       ts:Date.now(), dur, device:getProf().label,
       file:CFG.csvLastFile||null,

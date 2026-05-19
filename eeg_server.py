@@ -649,6 +649,8 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
             resp     = json.loads(await cortex.recv())
             headsets = resp.get('result', [])
             if not headsets:
+                await ws.send(json.dumps({'type':'status',
+                    'message':'No Emotiv headset found. Power on your EPOC X and retry.'}))
                 raise RuntimeError("No Emotiv headset found")
             headset_id = headsets[0]['id']
             print(f"[EMOTIV] Headset: {headset_id}")
@@ -942,7 +944,7 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             finally:
                 _self.FS = _save_fs
 
-            bands_out = compute_bands(clean, FS_MUSE)
+            bands_out = compute_frame(eeg_eeg, fs=FS_MUSE)
 
             # Build 6-channel vals (ref channels get avg value)
             avg_val = float(np.mean([bands_out['concentration']] * 4))
