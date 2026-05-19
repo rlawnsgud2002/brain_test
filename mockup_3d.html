@@ -2508,17 +2508,21 @@ function forceV(){
 // ══════════════════════════════════════════════════════════
 function fmtTime(ms){const s=Math.round((ms-RPT.sessionStart)/1000);return`${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;}
 function showReport(){
-  const hist=CFG.history,dur=Math.round((Date.now()-RPT.sessionStart)/1000);
-  const avgC=RPT._count?(RPT._sum/RPT._count).toFixed(1):'-';
-  const maxC=RPT.peaks.length?Math.max(...RPT.peaks.map(p=>p.conc)).toFixed(1):(hist.length?Math.max(...hist).toFixed(1):'-');
-  const minC=hist.length?Math.min(...hist).toFixed(1):'-';
+  const dur=Math.round((Date.now()-RPT.sessionStart)/1000);
+  const avgCNum=RPT._count?RPT._sum/RPT._count:null;
+  const avgC=avgCNum!=null?avgCNum.toFixed(1):'-';
+  // Use full-session RPT.timeline for min/std (CFG.history is only last 12s)
+  const tlVals=RPT.timeline.map(h=>h.v);
+  const maxC=RPT.peaks.length?Math.max(...RPT.peaks.map(p=>p.conc)).toFixed(1):(tlVals.length?Math.max(...tlVals).toFixed(1):'-');
+  const minC=tlVals.length?Math.min(...tlVals).toFixed(1):'-';
   const delays=RPT.events.filter(e=>e.peakDelay!=null).map(e=>+e.peakDelay);
   const avgDelay=delays.length?(delays.reduce((a,b)=>a+b)/delays.length).toFixed(1)+'s':'N/A';
 
-  // Session quality score: CQ average + focus stability
+  // Session quality score: CQ average + focus stability (full-session std dev)
   const cqArr=Array.from(CFG.cqVals||[]).slice(0,getProf().nCh);
   const avgCQ=cqArr.length?(cqArr.reduce((s,v)=>s+v,0)/cqArr.length*100).toFixed(0):'-';
-  const focusStd=hist.length>5?Math.sqrt(hist.reduce((s,v)=>s+(v-(+avgC))**2,0)/hist.length).toFixed(1):'-';
+  const _m=avgCNum||0;
+  const focusStd=tlVals.length>5?Math.sqrt(tlVals.reduce((s,v)=>s+(v-_m)**2,0)/tlVals.length).toFixed(1):'-';
   const vEvents=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
   const vRate=dur>60?(vEvents.length/(dur/60)).toFixed(2)+'/min':'N/A';
   // Band power at end of session
