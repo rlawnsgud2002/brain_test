@@ -433,7 +433,11 @@
     </div>
 
     <div class="panel-box" id="cqPanel">
-      <div class="panel-title">CONTACT QUALITY</div>
+      <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>CONTACT QUALITY</span>
+        <span id="cqLiveTag" style="font-size:8px;letter-spacing:.5px;color:#3a5070">SIM</span>
+      </div>
+      <div id="cqBattRow" style="display:none;font-size:8px;color:#60a060;margin-bottom:3px">🔋 <span id="cqBattVal">--</span>%</div>
       <div id="cqGrid" class="cq-grid"></div>
     </div>
 
@@ -814,6 +818,8 @@ function rptTick(avg) {
 //  WEBSOCKET
 // ══════════════════════════════════════════════════════════
 let ws = null, wsReTimer = null;
+let _cqLive = false;          // true while real Emotiv device stream is active
+let _emotivBattery = null;    // battery % received from Cortex (null = unknown)
 
 function wsSetStatus(state) {
   document.getElementById('wsDot').className = 'ws-dot ' + state;
@@ -836,6 +842,7 @@ function wsConnect() {
   ws.onclose = () => {
     const wasWs=CFG.dataSource==='ws';
     wsSetStatus('error'); CFG.dataSource='sim';
+    _cqLive=false; _emotivBattery=null;
     if(EXP.active)_expDone();
     if(wasWs)showToast('WebSocket disconnected — reconnecting…','#ff8040');
     clearTimeout(wsReTimer); wsReTimer=setTimeout(wsConnect,3000);
@@ -882,6 +889,18 @@ function wsConnect() {
       } else if (d.type==='calibration')   { _handleCalibration(d); }
         else if (d.type==='experiment')    { _handleExperiment(d);  }
         else if (d.type==='settings' && d.settings) { _applySettings(d.settings); }
+        else if (d.type==='status') {
+          // Server connection progress / info messages
+          const col = d.fallback ? '#ff8040' : (d.step==='streaming' ? '#40dd90' : '#7090cc');
+          showToast((d.step ? `[${d.step}] ` : '') + (d.message||''), col);
+          if (d.fallback==='sim') { CFG.dataSource='sim'; wsSetStatus('error'); }
+          else if (d.step==='streaming') { wsSetStatus('connected'); _cqLive=true; }
+        } else if (d.type==='error') {
+          showToast('⚠ ' + (d.message||'Server error'), '#ff5544');
+          if (d.fallback) { CFG.dataSource='sim'; wsSetStatus('error'); _cqLive=false; }
+        } else if (d.type==='battery') {
+          _emotivBattery = typeof d.pct === 'number' ? d.pct : null;
+        }
     } catch(_) {}
   };
 }
@@ -1498,9 +1517,9 @@ let vPhase=null,controlActive=false;
 
 function simStep(){
   const nch=getProf().nCh;
-  // Simulate contact quality (impedance) — each electrode drifts realistically
+  // Simulate contact quality — only when NOT receiving real device CQ data
   if(!CFG.cqVals||CFG.cqVals.length<14) CFG.cqVals=new Float32Array(14).fill(0.88);
-  if(CFG.dataSource!=='ws'){
+  if(CFG.dataSource!=='ws' || !_cqLive){
     for(let i=0;i<nch;i++){
       CFG.cqVals[i]=Math.max(0.2,Math.min(1.0,CFG.cqVals[i]+(Math.random()-.48)*0.008));
       if(CFG.cqVals[i]<0.55) CFG.cqVals[i]+=0.014;
@@ -2075,6 +2094,23 @@ function cogState(avg){
 function updateCQ(){
   const nch=getProf().nCh, elecs=CFG.electrodes;
   if(!CFG.cqVals) return;
+
+  // LIVE / SIM tag
+  const tag=document.getElementById('cqLiveTag');
+  if(tag){
+    if(_cqLive){ tag.textContent='LIVE'; tag.style.color='#40dd90'; }
+    else       { tag.textContent='SIM';  tag.style.color='#3a5070'; }
+  }
+  // Battery row
+  const battRow=document.getElementById('cqBattRow'), battVal=document.getElementById('cqBattVal');
+  if(battRow && battVal){
+    if(_emotivBattery!==null){
+      battRow.style.display='block';
+      battVal.textContent=_emotivBattery;
+      battVal.style.color=_emotivBattery>30?'#60cc60':_emotivBattery>15?'#ffcc44':'#ff5544';
+    } else { battRow.style.display='none'; }
+  }
+
   const items=elecs.slice(0,nch).map((e,i)=>{
     const q=CFG.cqVals[i]||0.85;
     const kO=toKOhm(q);

@@ -258,9 +258,22 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=
     emg_ratio = (emg_l + emg_r) / (g_beta + 1e-9)
     emg_warn  = bool(emg_ratio > 2.0)  # beta-range dominated by EMG-like noise
 
+    # Signal quality proxy per channel (0=disconnected, 1=excellent)
+    # Based on coefficient of variation: flat line → 0, noisy → low, good signal → high
+    sig_quality = []
+    for ch in eeg_14ch:
+        std_v = float(np.std(ch))
+        mean_abs = float(np.mean(np.abs(ch))) + 1e-9
+        cv = std_v / mean_abs
+        if cv < 0.05:           q = 0.05   # flat / disconnected
+        elif cv > 10.0:         q = 0.15   # excessive noise / clipping
+        else:                   q = float(np.clip(0.15 + cv * 0.17, 0.15, 1.0))
+        sig_quality.append(round(q, 3))
+
     return {
         'type': 'eeg',
         'channels': [round(v, 2) for v in norm],
+        'contact_quality': sig_quality,
         'artifacts': {**artifacts, 'emg_warn': emg_warn},
         'bands': {
             'delta': round(avg(0)*1e6, 2),
@@ -632,15 +645,24 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
         async with websockets.connect(CORTEX_URL, ssl=ssl_ctx) as cortex:
             print("[EMOTIV] Connected to Cortex")
 
-            # 1. requestAccess
+            # 1. requestAccess — user must approve in Emotiv App if first time
+            await ws.send(json.dumps({'type':'status', 'step':'requestAccess',
+                'message':'Step 1/4: Requesting Cortex access… (approve in EmotivApp if prompted)'}))
             await cortex.send(json.dumps({
                 'jsonrpc':'2.0','method':'requestAccess','id':1,
                 'params':{'clientId': CLIENT_ID,'clientSecret': CLIENT_SEC}
             }))
             resp = json.loads(await cortex.recv())
-            print(f"[EMOTIV] requestAccess: {resp.get('result',{}).get('accessGranted')}")
+            granted = resp.get('result',{}).get('accessGranted', False)
+            print(f"[EMOTIV] requestAccess: accessGranted={granted}")
+            if not granted:
+                await ws.send(json.dumps({'type':'status',
+                    'message':'Waiting for EmotivApp approval — open EmotivApp and grant access, then retry.'}))
+                # Non-fatal: authorize may still succeed if previously granted
 
             # 2. authorize
+            await ws.send(json.dumps({'type':'status', 'step':'authorize',
+                'message':'Step 2/4: Authorizing…'}))
             await cortex.send(json.dumps({
                 'jsonrpc':'2.0','method':'authorize','id':2,
                 'params':{'clientId': CLIENT_ID,'clientSecret': CLIENT_SEC,
@@ -648,23 +670,34 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
             }))
             resp  = json.loads(await cortex.recv())
             token = resp.get('result',{}).get('cortexToken','')
-            print(f"[EMOTIV] Token: {token[:20]}..." if token else "[EMOTIV] Auth failed")
-
-            if not token:
-                raise RuntimeError("Cortex authorization failed")
+            if token:
+                print(f"[EMOTIV] Token obtained: {token[:20]}…")
+            else:
+                err_msg = resp.get('error',{}).get('message','unknown')
+                print(f"[EMOTIV] Auth failed: {err_msg}")
+                raise RuntimeError(f"Cortex authorization failed ({err_msg}). "
+                                   "Check Client ID/Secret and ensure EmotivApp is running.")
 
             # 3. queryHeadsets → pick first
+            await ws.send(json.dumps({'type':'status', 'step':'queryHeadsets',
+                'message':'Step 3/4: Searching for EPOC X headset…'}))
             await cortex.send(json.dumps({
                 'jsonrpc':'2.0','method':'queryHeadsets','id':3,'params':{}
             }))
             resp     = json.loads(await cortex.recv())
             headsets = resp.get('result', [])
             if not headsets:
-                await ws.send(json.dumps({'type':'status',
-                    'message':'No Emotiv headset found. Power on your EPOC X and retry.'}))
-                raise RuntimeError("No Emotiv headset found")
+                raise RuntimeError(
+                    'No Emotiv headset detected. Power on your EPOC X, '
+                    'pair via Bluetooth, then retry.')
             headset_id = headsets[0]['id']
-            print(f"[EMOTIV] Headset: {headset_id}")
+            battery    = headsets[0].get('settings',{}).get('batteryPercent', None)
+            batt_str   = f' · Battery {battery}%' if battery is not None else ''
+            print(f"[EMOTIV] Headset: {headset_id}{batt_str}")
+            await ws.send(json.dumps({'type':'status',
+                'message':f'Headset found: {headset_id}{batt_str}'}))
+            if battery is not None:
+                await ws.send(json.dumps({'type':'battery', 'pct': battery}))
 
             # 4. createSession
             await cortex.send(json.dumps({
@@ -674,32 +707,50 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
             }))
             resp       = json.loads(await cortex.recv())
             session_id = resp.get('result',{}).get('id','')
+            if not session_id:
+                err_msg = resp.get('error',{}).get('message','unknown')
+                raise RuntimeError(f'createSession failed: {err_msg}')
             print(f"[EMOTIV] Session: {session_id}")
 
             # 5. subscribe EEG
+            await ws.send(json.dumps({'type':'status', 'step':'subscribe',
+                'message':'Step 4/4: Subscribing to EEG stream…'}))
             await cortex.send(json.dumps({
                 'jsonrpc':'2.0','method':'subscribe','id':5,
                 'params':{'cortexToken': token,'session': session_id,
                           'streams':['eeg']}
             }))
             resp = json.loads(await cortex.recv())
-            cols = resp.get('result',{}).get('success',[{}])[0].get('cols',[])
+            success_list = resp.get('result',{}).get('success', [])
+            cols = success_list[0].get('cols',[]) if success_list else []
+            if not cols:
+                raise RuntimeError('EEG subscription failed — no column list returned from Cortex')
             print(f"[EMOTIV] EEG columns: {cols}")
 
-            await ws.send(json.dumps({'type':'status',
-                'message':f'Emotiv {headset_id} connected. Streaming EEG...'}))
+            await ws.send(json.dumps({'type':'status', 'step':'streaming',
+                'message':f'Emotiv {headset_id} connected — streaming EEG…'}))
 
-            # Map Cortex column order to EMOTIV_CHS order
+            # Map Cortex column order → EMOTIV_CHS order (by name, Cortex column list
+            # typically starts with COUNTER/INTERPOLATED then channels in hardware order)
             ch_order = []
+            missing  = []
             for name in EMOTIV_CHS:
-                if name in cols:
-                    ch_order.append(cols.index(name))
-                else:
-                    ch_order.append(None)
+                idx = next((i for i, c in enumerate(cols)
+                            if c.strip().upper() == name.upper()), None)
+                ch_order.append(idx)
+                if idx is None:
+                    missing.append(name)
+            if missing:
+                print(f"[EMOTIV] Warning: channels not found in Cortex cols: {missing}")
+                await ws.send(json.dumps({'type':'status',
+                    'message':f'Warning: missing Cortex channels {missing}. Check headset firmware.'}))
 
-            # Stream EEG frames
-            buf = {i: [] for i in range(14)}
-            WINDOW = 32  # accumulate 32 samples (~0.25s) then emit
+            # Sliding-window buffer: emit every EMIT_EVERY samples, compute over
+            # up to COMPUTE_WIN samples for better frequency resolution (≥ 0.5s)
+            buf          = {i: [] for i in range(14)}
+            EMIT_EVERY   = 32    # emit frame every ~0.25 s (32 samples @ 128 Hz)
+            COMPUTE_WIN  = 256   # use up to 2 s for bandpower when available
+            MIN_WIN      = 64    # minimum 0.5 s before first frame
 
             async for raw in cortex:
                 pkt = json.loads(raw)
@@ -710,8 +761,10 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
                     if col_i is not None and col_i < len(row):
                         buf[ci].append(float(row[col_i]))
 
-                if len(buf[0]) >= WINDOW:
-                    seg = np.array([buf[i][:WINDOW] for i in range(14)])
+                if len(buf[0]) >= EMIT_EVERY and len(buf[0]) >= MIN_WIN:
+                    use_n = min(len(buf[0]), COMPUTE_WIN)
+                    # Use last use_n samples (overlapping window for smooth update)
+                    seg = np.array([buf[i][-use_n:] for i in range(14)])
                     frame = compute_frame(seg, fs=128, baseline=STATE['baseline'])
                     update_state(frame['channels'], frame['bands'])
                     _add_vpattern(frame, detector, eeg_seg=seg)
@@ -723,21 +776,26 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
                         await ws.send(json.dumps(frame))
                     except websockets.exceptions.ConnectionClosed:
                         return
+                    # Advance buffer by EMIT_EVERY (sliding window)
                     for i in range(14):
-                        buf[i] = buf[i][WINDOW:]
+                        buf[i] = buf[i][EMIT_EVERY:]
 
-    except OSError:
-        print("[EMOTIV] Cortex not running — falling back to simulation")
-        await ws.send(json.dumps({'type':'status',
-            'message':'Emotiv App not running (wss://localhost:6868). Falling back to simulation.',
-            'fallback':'sim'}))
-        await stream_sim(ws)
+    except OSError as e:
+        msg = ('Emotiv App (Cortex) not running at wss://localhost:6868. '
+               'Start EmotivApp first, then retry.')
+        print(f"[EMOTIV] {msg} ({e})")
+        await ws.send(json.dumps({'type':'error', 'message': msg, 'fallback':'sim'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
+    except RuntimeError as e:
+        msg = str(e)
+        print(f"[EMOTIV] Runtime error: {msg}")
+        await ws.send(json.dumps({'type':'error', 'message': msg, 'fallback':'sim'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
     except Exception as e:
-        print(f"[EMOTIV] Error: {e} — falling back to simulation")
-        await ws.send(json.dumps({'type':'status',
-            'message':f'Emotiv error: {e}. Falling back to simulation.',
-            'fallback':'sim'}))
-        await stream_sim(ws)
+        msg = f'Emotiv connection error: {e}'
+        print(f"[EMOTIV] {msg}")
+        await ws.send(json.dumps({'type':'error', 'message': msg, 'fallback':'sim'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
 
 # ── TGAM / NeuroSky — ThinkGear Serial Protocol ───────────────────────────────
 async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_holder=None):
