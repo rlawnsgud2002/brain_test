@@ -98,6 +98,13 @@
     .cq-item .ci-track { flex:1; height:3px; background:rgba(100,140,255,0.1); border-radius:1px; overflow:hidden; }
     .cq-item .ci-fill { height:100%; border-radius:1px; transition:width .5s,background .5s; }
 
+    /* ── Band Spectrum Canvas ── */
+    #bandSpecCanvas { display:block; width:100%; border-radius:3px; background:rgba(5,8,20,0.5); border:1px solid rgba(100,140,255,0.1); }
+
+    /* ── F1 Trend Canvas ── */
+    #f1TrendWrap { margin-top:10px; }
+    #f1TrendCanvas { display:block; width:100%; border-radius:4px; background:rgba(5,8,20,0.5); border:1px solid rgba(100,140,255,0.15); }
+
     /* ── Help modal ── */
     #helpModal .modal-box { width:380px; max-height:86vh; overflow-y:auto; }
     .help-section { margin-bottom:10px; }
@@ -432,6 +439,18 @@
       <canvas id="topoCanvas" height="120"></canvas>
     </div>
 
+    <div class="panel-box">
+      <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
+        <span>BAND SPECTRUM</span>
+        <span id="domBandLabel" style="font-size:8px;letter-spacing:.5px;color:#6080cc"></span>
+      </div>
+      <canvas id="bandSpecCanvas" height="60"></canvas>
+      <div id="bandEngRow" style="font-size:8px;color:#5070a0;margin-top:3px;text-align:center">
+        EI: <span id="bandEI" style="color:#ffcc44">—</span>
+        &nbsp;·&nbsp; FAA: <span id="bandFAA" style="color:#60ccff">—</span>
+      </div>
+    </div>
+
     <div class="panel-box" id="cqPanel">
       <div class="panel-title" style="display:flex;justify-content:space-between;align-items:center">
         <span>CONTACT QUALITY</span>
@@ -669,6 +688,11 @@
 <div class="modal" id="historyModal">
   <div class="modal-box">
     <h3>SESSION HISTORY <span class="modal-close" onclick="document.getElementById('historyModal').classList.remove('show')">✕</span></h3>
+    <div id="f1TrendWrap" style="display:none">
+      <div style="font-size:9px;color:#6480cc;letter-spacing:1.5px;margin-bottom:4px">F1 SCORE TREND</div>
+      <canvas id="f1TrendCanvas" height="70"></canvas>
+      <div id="f1TrendStats" style="font-size:8px;color:#4060a0;margin-top:3px;text-align:center"></div>
+    </div>
     <div id="historyList"><div style="font-size:10px;color:#6480cc;padding:10px 0">Loading…</div></div>
     <div id="histCompareSection">
       <h4>SESSION COMPARISON</h4>
@@ -2324,6 +2348,7 @@ function animate(){
     CFG._lastStepTime=now;
     const avg=simStep();update3D();updateUI(avg);drawGraph();
     updateSpectro(); drawSpectro();
+    drawBandSpec();
   }
 
   if(pulseActive){
@@ -2920,6 +2945,85 @@ function drawSpectro() {
 }
 
 // ══════════════════════════════════════════════════════════
+//  BAND SPECTRUM CANVAS (vertical animated bars, right panel)
+// ══════════════════════════════════════════════════════════
+const BSPEC_COLS=['#4455ee','#7055cc','#00cc88','#ffcc00','#ff5030'];
+const BSPEC_KEYS=['delta','theta','alpha','beta','gamma'];
+const BSPEC_LBLS=['δ','θ','α','β','γ'];
+const _bspecSmooth=[0,0,0,0,0]; // smoothed display values (0-1)
+
+function drawBandSpec(){
+  const cv=document.getElementById('bandSpecCanvas');
+  if(!cv) return;
+  const W=cv.offsetWidth;
+  if(!W) return;
+  const H=60;
+  if(cv.width!==W||cv.height!==H){cv.width=W;cv.height=H;}
+  const ctx=cv.getContext('2d');
+  if(!ctx) return;
+  ctx.clearRect(0,0,W,H);
+
+  const vals=BSPEC_KEYS.map(k=>Math.max(0,bands[k]||0));
+  const tot=Math.max(1,vals.reduce((a,b)=>a+b,0));
+  const rel=vals.map(v=>v/tot);
+
+  // Smooth toward target (0.18 lerp per frame ~= 3s settling)
+  const alpha_s=0.18;
+  rel.forEach((v,i)=>{ _bspecSmooth[i]+=(v-_bspecSmooth[i])*alpha_s; });
+
+  const nBars=5, gap=3, barW=Math.floor((W-gap*(nBars+1))/nBars);
+  const PAD_B=14, PAD_T=4, drawH=H-PAD_B-PAD_T;
+
+  _bspecSmooth.forEach((v,i)=>{
+    const x=gap+(barW+gap)*i;
+    const bh=Math.max(2,Math.round(v*drawH));
+    const y=PAD_T+drawH-bh;
+
+    // Glow
+    ctx.shadowColor=BSPEC_COLS[i]; ctx.shadowBlur=8;
+    ctx.fillStyle=BSPEC_COLS[i]+'cc';
+    ctx.fillRect(x,y,barW,bh);
+    ctx.shadowBlur=0;
+
+    // % label inside or above bar
+    const pct=Math.round(v*100);
+    ctx.fillStyle=pct>8?'rgba(0,0,0,0.6)':'rgba(150,180,255,0.7)';
+    ctx.font=`bold 8px monospace`;
+    ctx.textAlign='center';
+    if(bh>12) ctx.fillText(pct+'%',x+barW/2,y+bh-2);
+    else       ctx.fillText(pct+'%',x+barW/2,y-2);
+
+    // Band label at bottom
+    ctx.fillStyle=BSPEC_COLS[i];
+    ctx.font='9px monospace';
+    ctx.fillText(BSPEC_LBLS[i],x+barW/2,H-3);
+  });
+
+  // Dominant band label
+  const domIdx=_bspecSmooth.indexOf(Math.max(..._bspecSmooth));
+  const domEl=document.getElementById('domBandLabel');
+  if(domEl){
+    const domNames=['DELTA','THETA','ALPHA','BETA','GAMMA'];
+    domEl.textContent=domNames[domIdx];
+    domEl.style.color=BSPEC_COLS[domIdx];
+  }
+
+  // EI and FAA display
+  const eiEl=document.getElementById('bandEI');
+  const faaEl=document.getElementById('bandFAA');
+  if(eiEl){
+    const ei=bands.engagement_index;
+    eiEl.textContent=ei!=null?ei.toFixed(2):'—';
+    eiEl.style.color=ei!=null?(ei>0.8?'#ff9040':ei>0.5?'#ffcc44':'#6080cc'):'#3a5070';
+  }
+  if(faaEl){
+    const faa=bands.faa;
+    faaEl.textContent=faa!=null?faa.toFixed(2):'—';
+    faaEl.style.color=faa!=null?(faa>0.1?'#40cc90':faa<-0.1?'#ff8060':'#60a0cc'):'#3a5070';
+  }
+}
+
+// ══════════════════════════════════════════════════════════
 //  PER-CHANNEL GRAPH TOGGLE
 // ══════════════════════════════════════════════════════════
 const CH_COLORS=['#4488ff','#ff6644','#44dd88','#ffcc44','#cc66ff','#44ccff','#ff88aa'];
@@ -3138,6 +3242,18 @@ function saveSessionHistory(){
   _sessionSaved = true;
   const vEvts=RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED');
   const avgC=RPT._count?+(RPT._sum/RPT._count).toFixed(1):null;
+
+  // Compute best F1 if labeled CSV data is available
+  let bestF1=null, bestDt=null;
+  const hasLbls=CFG.csvData&&CFG.csvData.length&&CFG.csvData.some(d=>d.label!==null&&d.label!=='');
+  if(hasLbls){
+    const rpts=calcROCPoints();
+    if(rpts&&rpts.length){
+      const best=rpts.reduce((a,b)=>b.f1>a.f1?b:a);
+      if(best.f1>0){bestF1=+best.f1.toFixed(3); bestDt=best.dt;}
+    }
+  }
+
   _openIDB(db=>{
     const tx=db.transaction('sessions','readwrite');
     tx.onerror=e=>{ _sessionSaved=false; showToast('Session history save failed (storage full?): '+e.target.error,'#ff8040'); };
@@ -3146,6 +3262,7 @@ function saveSessionHistory(){
       file:CFG.csvLastFile||null,
       avgConc:avgC, vCount:vEvts.length,
       thLow:CFG.thLow, thHigh:CFG.thHigh, dt:CFG.dt,
+      f1:bestF1, bestDt,
       sessionName:document.getElementById('sessionName')?.value||''
     });
   });
@@ -3168,6 +3285,7 @@ function _renderHistoryList(){
   const el=document.getElementById('historyList');
   if(!_histSessions.length){
     el.innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet. Run a CSV replay to save automatically.</div>';
+    document.getElementById('f1TrendWrap').style.display='none';
     return;
   }
   el.innerHTML=_histSessions.map((s,i)=>{
@@ -3175,17 +3293,29 @@ function _renderHistoryList(){
     const ds=`${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
     const nm=s.sessionName?`<b style="color:#a0c0e0">${escH(s.sessionName)}</b> · `:'';
     const dur=Math.max(0,s.dur||0);
+    const f1Tag=s.f1!=null?`<span style="color:${s.f1>=0.7?'#40cc90':s.f1>=0.4?'#ffcc44':'#ff8060'};font-size:9px;font-weight:bold"> F1:${(s.f1*100).toFixed(0)}%</span>`:'';
     return `<div class="hist-item">
       <input type="checkbox" data-idx="${i}" onchange="_onHistCheck()">
       <div class="hist-item-body">
         <div style="display:flex;justify-content:space-between;font-size:10px">
-          <span>${nm}<span style="color:#6480cc">${ds}</span></span>
+          <span>${nm}<span style="color:#6480cc">${ds}</span>${f1Tag}</span>
           <span style="color:#3a5070">${Math.floor(dur/60)}m ${dur%60}s</span>
         </div>
-        <div style="font-size:9px;color:#5070a0;margin-top:2px">${escH(s.device)} · V-events:${s.vCount}${s.avgConc!=null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${escH(s.file)}`:''}</div>
+        <div style="font-size:9px;color:#5070a0;margin-top:2px">${escH(s.device)} · V:${s.vCount}${s.avgConc!=null?` · Avg:${s.avgConc}%`:''} · Low=${s.thLow}% Hi=${s.thHigh}% dt=${s.dt}s${s.file?` · ${escH(s.file)}`:''}</div>
       </div>
     </div>`;
   }).join('');
+
+  // F1 trend chart — show if any session has F1 data
+  const f1pts=_histSessions.filter(s=>s.f1!=null);
+  const wrap=document.getElementById('f1TrendWrap');
+  if(f1pts.length>=2){
+    wrap.style.display='block';
+    // Give browser one frame to layout before drawing
+    requestAnimationFrame(()=>_drawF1Trend(f1pts));
+  } else {
+    wrap.style.display='none';
+  }
 }
 function _onHistCheck(){
   const checked=document.querySelectorAll('#historyList input[type=checkbox]:checked').length;
@@ -3251,6 +3381,69 @@ function _drawCompareChart(sel){
     ctx.fillText(lbl.slice(0,12),cx,PAD.t+ch+14);
   });
 }
+function _drawF1Trend(pts){
+  // pts: array of sessions with .f1 (newest first, chronologically reversed)
+  const cv=document.getElementById('f1TrendCanvas');
+  if(!cv) return;
+  const W=cv.offsetWidth||cv.closest('.modal-box')?.clientWidth-32||300;
+  const H=70; cv.width=W; cv.height=H;
+  const ctx=cv.getContext('2d'); if(!ctx) return;
+  const PAD={l:28,r:8,t:8,b:18};
+  const iW=W-PAD.l-PAD.r, iH=H-PAD.t-PAD.b;
+
+  ctx.clearRect(0,0,W,H);
+
+  // Draw grid lines
+  [0,0.25,0.5,0.75,1].forEach(v=>{
+    const y=PAD.t+iH*(1-v);
+    ctx.strokeStyle='rgba(100,140,255,0.1)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(PAD.l,y); ctx.lineTo(PAD.l+iW,y); ctx.stroke();
+    ctx.fillStyle='#3a5070'; ctx.font='7px monospace'; ctx.textAlign='right';
+    ctx.fillText((v*100).toFixed(0)+'%', PAD.l-2, y+3);
+  });
+
+  // Plot in chronological order (pts is newest-first, reverse)
+  const chron=[...pts].reverse();
+  const n=chron.length;
+  const xOf=i=>PAD.l+i/(n-1)*iW;
+  const yOf=f=>PAD.t+iH*(1-f);
+
+  // Shaded area under curve
+  ctx.beginPath();
+  ctx.moveTo(xOf(0),PAD.t+iH);
+  chron.forEach((s,i)=>ctx.lineTo(xOf(i),yOf(s.f1)));
+  ctx.lineTo(xOf(n-1),PAD.t+iH); ctx.closePath();
+  const grad=ctx.createLinearGradient(0,PAD.t,0,PAD.t+iH);
+  grad.addColorStop(0,'rgba(64,200,144,0.28)'); grad.addColorStop(1,'rgba(64,200,144,0.03)');
+  ctx.fillStyle=grad; ctx.fill();
+
+  // Line
+  ctx.beginPath(); ctx.strokeStyle='#40cc90'; ctx.lineWidth=1.5; ctx.lineJoin='round';
+  chron.forEach((s,i)=>i===0?ctx.moveTo(xOf(0),yOf(s.f1)):ctx.lineTo(xOf(i),yOf(s.f1)));
+  ctx.stroke();
+
+  // Dots + labels
+  chron.forEach((s,i)=>{
+    const x=xOf(i), y=yOf(s.f1);
+    ctx.beginPath(); ctx.arc(x,y,3,0,Math.PI*2);
+    ctx.fillStyle=s.f1>=0.7?'#40cc90':s.f1>=0.4?'#ffcc44':'#ff8060'; ctx.fill();
+    // Date label on x axis (every other point if crowded)
+    if(n<=8||i%Math.ceil(n/6)===0){
+      const d=new Date(s.ts);
+      const lbl=`${d.getMonth()+1}/${d.getDate()}`;
+      ctx.fillStyle='#3a5070'; ctx.font='7px monospace'; ctx.textAlign='center';
+      ctx.fillText(lbl,x,H-3);
+    }
+  });
+
+  // Stats row
+  const f1vals=chron.map(s=>s.f1);
+  const best=Math.max(...f1vals), avg=f1vals.reduce((a,b)=>a+b,0)/f1vals.length;
+  const trend=f1vals.length>=3?(f1vals[f1vals.length-1]-f1vals[0]>0.02?'↑ IMPROVING':f1vals[f1vals.length-1]-f1vals[0]<-0.02?'↓ DECLINING':'─ STABLE'):'';
+  const st=document.getElementById('f1TrendStats');
+  if(st) st.innerHTML=`Best: <b style="color:#40cc90">${(best*100).toFixed(0)}%</b> · Avg: <b>${(avg*100).toFixed(0)}%</b> · ${n} sessions${trend?` · <span style="color:${trend.includes('↑')?'#40cc90':trend.includes('↓')?'#ff8060':'#6080cc'}">${trend}</span>`:''}`;
+}
+
 function _buildCompareTable(sel){
   const el=document.getElementById('compareTable');
   if(!el) return;
