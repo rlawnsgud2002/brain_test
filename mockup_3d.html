@@ -948,6 +948,7 @@ function _applySettings(s) {
   if (s.thLow !=null){CFG.thLow =s.thLow; document.getElementById('thLow').value    =CFG.thLow; document.getElementById('tlv').textContent=CFG.thLow+'%';}
   if (s.thHigh!=null){CFG.thHigh=s.thHigh;document.getElementById('thHigh').value   =CFG.thHigh;document.getElementById('thv').textContent=CFG.thHigh+'%';}
   if (s.dt    !=null){CFG.dt    =s.dt;    document.getElementById('dtSlider').value =CFG.dt;    document.getElementById('dtv').textContent=CFG.dt+'s';}
+  saveSettingsLS(); // persist server-pushed settings (e.g. calibration result)
 }
 
 function updateTopSrc() {
@@ -1806,7 +1807,9 @@ function simStep(){
       if(CFG.vLow&&avg>CFG.thHigh){
         const recent=CFG.history.slice(-8);
         const slope=recent.length>3?(recent[recent.length-1]-recent[recent.length-4])/3:0;
-        if(_vElapsed<CFG.dt&&slope>0.3){toggleControl(avg);CFG.vCooldown=Math.round(CFG.dt*10);}
+        // Cooldown in ticks: CSV mode divides by csvSpeed so signal-time matches detectVPatternsPure
+        const _cdTicks=Math.round(CFG.dt*10/(CFG.dataSource==='csv'?(CFG.csvSpeed||1):1));
+        if(_vElapsed<CFG.dt&&slope>0.3){toggleControl(avg);CFG.vCooldown=_cdTicks;}
         CFG.vLow=false;
       }
     }
@@ -2807,9 +2810,11 @@ function exportCSV(){
       rows.push(`${base},${matched},${isFinite(nearest.tSec)?nearest.tSec.toFixed(1):''}`);
     } else { rows.push(base); }
   });
-  const histRows=['SessionTime(s),Concentration(%)'];
-  const histOffset=CFG.history.length>1?Math.max(0,(Date.now()-RPT.sessionStart)/1000-(CFG.history.length-1)*CFG._dt):0;
-  CFG.history.forEach((v,i)=>histRows.push(`${(histOffset+i*CFG._dt).toFixed(2)},${v.toFixed(1)}`));
+  const histRows=['SessionTime(s),Concentration(%),Label'];
+  RPT.timeline.forEach(h=>{
+    const tSec=((h.t-RPT.sessionStart)/1000).toFixed(2);
+    histRows.push(`${tSec},${h.v.toFixed(1)},${h.lbl||''}`);
+  });
   const a=document.createElement('a');
   const csvUrl=URL.createObjectURL(new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')],{type:'text/csv'}));
   a.href=csvUrl; a.download=`eeg_session_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.csv`;
@@ -3219,8 +3224,8 @@ function findBestThresholds() {
     }
   }
 
-  // Apply best settings to sliders + CFG
-  if(best.f1 >= 0) {
+  // Apply best settings to sliders + CFG (only when a real improvement found)
+  if(best.f1 > 0) {
     CFG.thLow=best.thLow; CFG.thHigh=best.thHigh; CFG.dt=best.dt;
     document.getElementById('thLow').value=best.thLow;
     document.getElementById('thHigh').value=best.thHigh;

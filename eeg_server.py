@@ -180,7 +180,7 @@ def preprocess(eeg_14ch, fs=None, notch_hz=50, blink_thresh_uv=80.0):
     for fi in FRONTAL_IDX:
         sig = clean[fi]
         t = 0
-        while t < n_samples - blink_win:
+        while t <= n_samples - blink_win:
             segment = sig[t:t + blink_win]
             if np.max(np.abs(segment)) > blink_thresh_uv:
                 # Mark blink window — interpolate linearly across it
@@ -206,7 +206,8 @@ def bandpower(signal, fs, fmin, fmax):
         return 0.0
     freqs, psd = welch(signal, fs=fs, nperseg=nperseg)
     mask = (freqs >= fmin) & (freqs <= fmax)
-    return float(np.mean(psd[mask])) if mask.any() else 0.0
+    result = float(np.mean(psd[mask])) if mask.any() else 0.0
+    return result if np.isfinite(result) else 0.0
 
 def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=None):
     """
@@ -1025,9 +1026,10 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             _ei  = _g_beta / max(_g_alpha + _g_theta, 1e-9)
             _tot = max(_g_delta+_g_theta+_g_alpha+_g_beta+_g_gamma, 1e-9)
             _conc = float(np.clip(_ei * 20 + 40, 0, 100))
-            # FAA: ln(right_alpha) - ln(left_alpha) using AF8(idx1) / AF7(idx0)
-            _faa_l = bandpower(clean[0], FS_MUSE, 8, 12)  # AF7 → TP9 at idx0
-            _faa_r = bandpower(clean[1], FS_MUSE, 8, 12)  # AF8 at idx1 (MUSE_EEG_IDX order)
+            # FAA: ln(AF8_alpha) - ln(AF7_alpha)
+            # MUSE_EEG order: [TP9, AF7, AF8, TP10] → clean[1]=AF7, clean[2]=AF8
+            _faa_l = bandpower(clean[1], FS_MUSE, 8, 12)  # AF7 (left frontal)
+            _faa_r = bandpower(clean[2], FS_MUSE, 8, 12)  # AF8 (right frontal)
             _faa = float(np.clip((np.log(_faa_r+1e-9)-np.log(_faa_l+1e-9))/np.log(100), -0.5, 0.5))
             bands_out = {
                 'delta':  round(_g_delta/_tot*100),
