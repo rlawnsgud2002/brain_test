@@ -24,6 +24,7 @@ import pickle
 import argparse
 import random
 import time
+import os
 from typing import Optional
 
 try:
@@ -123,15 +124,16 @@ def _make_filters(fs):
     b_n60, a_n60 = iirnotch(60.0, Q=30, fs=fs)
     return (b_bp, a_bp), (b_n50, a_n50), (b_n60, a_n60)
 
-_FILTERS = None  # initialized on first use
+_FILTERS_CACHE = {}  # keyed by fs so Muse(256Hz) and Emotiv(128Hz) use correct filters
 
-def get_filters():
-    global _FILTERS
-    if _FILTERS is None:
-        _FILTERS = _make_filters(FS)
-    return _FILTERS
+def get_filters(fs=None):
+    if fs is None:
+        fs = FS
+    if fs not in _FILTERS_CACHE:
+        _FILTERS_CACHE[fs] = _make_filters(fs)
+    return _FILTERS_CACHE[fs]
 
-def preprocess(eeg_14ch, notch_hz=50, blink_thresh_uv=80.0):
+def preprocess(eeg_14ch, fs=None, notch_hz=50, blink_thresh_uv=80.0):
     """
     Signal processing pipeline applied to raw EEG before band-power extraction.
 
@@ -149,7 +151,8 @@ def preprocess(eeg_14ch, notch_hz=50, blink_thresh_uv=80.0):
       clean         : np.ndarray (14, n_samples) cleaned EEG
       artifacts     : dict with blink count and rejected sample ratio
     """
-    (b_bp, a_bp), (b_n50, a_n50), (b_n60, a_n60) = get_filters()
+    _fs = fs if fs is not None else FS
+    (b_bp, a_bp), (b_n50, a_n50), (b_n60, a_n60) = get_filters(_fs)
     n_samples = eeg_14ch.shape[1]
     clean = np.empty_like(eeg_14ch, dtype=float)
 
@@ -170,8 +173,7 @@ def preprocess(eeg_14ch, notch_hz=50, blink_thresh_uv=80.0):
         clean[i] = sig
 
     # 3. Eye-blink rejection on frontal channels
-    # Blinks appear as large-amplitude, short-duration (~200ms) spikes
-    blink_win  = max(1, int(FS * 0.2))   # 200 ms window
+    blink_win  = max(1, int(_fs * 0.2))  # 200 ms window at actual sample rate
     blink_count   = 0
     rejected_samp = 0
 
@@ -213,7 +215,7 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=
     """
     artifacts = {'blinks': 0, 'rejected_ratio': 0.0}
     if apply_preprocess and NUMPY_OK:
-        eeg_14ch, artifacts = preprocess(eeg_14ch, notch_hz=notch_hz)
+        eeg_14ch, artifacts = preprocess(eeg_14ch, fs=fs, notch_hz=notch_hz)
 
     ratios, ch_bands = [], []
     for ch in eeg_14ch:
@@ -761,6 +763,11 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
                     if col_i is not None and col_i < len(row):
                         buf[ci].append(float(row[col_i]))
 
+                # Safety cap: discard oldest samples if buffer grows too large
+                if len(buf[0]) > COMPUTE_WIN * 2:
+                    for i in range(14):
+                        buf[i] = buf[i][-COMPUTE_WIN:]
+
                 if len(buf[0]) >= EMIT_EVERY and len(buf[0]) >= MIN_WIN:
                     use_n = min(len(buf[0]), COMPUTE_WIN)
                     # Use last use_n samples (overlapping window for smooth update)
@@ -1004,14 +1011,8 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             eeg_arr = np.array(buf[-WIN:]).T   # (6, 256)
             eeg_eeg = eeg_arr[MUSE_EEG_IDX]    # (4, 256) active EEG only
 
-            # Preprocess (adapt preprocess for 4ch/256Hz)
-            _save_fs = FS
-            import eeg_server as _self
-            _self.FS = FS_MUSE
-            try:
-                clean, artifacts = preprocess(eeg_eeg, notch_hz=50)
-            finally:
-                _self.FS = _save_fs
+            # Preprocess at Muse sample rate (256 Hz)
+            clean, artifacts = preprocess(eeg_eeg, fs=FS_MUSE, notch_hz=50)
 
             # compute_frame expects 14ch; use inline 4ch band computation for Muse
             nch4 = clean.shape[0]
