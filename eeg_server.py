@@ -133,7 +133,7 @@ def get_filters(fs=None):
         _FILTERS_CACHE[fs] = _make_filters(fs)
     return _FILTERS_CACHE[fs]
 
-def preprocess(eeg_14ch, fs=None, notch_hz=50, blink_thresh_uv=80.0):
+def preprocess(eeg_14ch, fs=None, notch_hz=50, blink_thresh_uv=80.0, frontal_idx=None):
     """
     Signal processing pipeline applied to raw EEG before band-power extraction.
 
@@ -176,8 +176,10 @@ def preprocess(eeg_14ch, fs=None, notch_hz=50, blink_thresh_uv=80.0):
     blink_win  = max(1, int(_fs * 0.2))  # 200 ms window at actual sample rate
     blink_count   = 0
     rejected_samp = 0
+    n_ch = clean.shape[0]
+    _frontal = [fi for fi in (frontal_idx if frontal_idx is not None else FRONTAL_IDX) if fi < n_ch]
 
-    for fi in FRONTAL_IDX:
+    for fi in _frontal:
         sig = clean[fi]
         t = 0
         while t <= n_samples - blink_win:
@@ -197,7 +199,7 @@ def preprocess(eeg_14ch, fs=None, notch_hz=50, blink_thresh_uv=80.0):
             else:
                 t += 1
 
-    rejected_ratio = round(rejected_samp / (n_samples * len(FRONTAL_IDX) + 1e-9), 3)
+    rejected_ratio = round(rejected_samp / (n_samples * max(1, len(_frontal)) + 1e-9), 3)
     return clean, {'blinks': blink_count, 'rejected_ratio': rejected_ratio}
 
 def bandpower(signal, fs, fmin, fmax):
@@ -923,7 +925,7 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
                 }
                 artifacts = {'emg_warn': poor_signal > 50, 'poor_signal': poor_signal}
 
-                vdet = detector[0] if detector else None
+                vdet = detector
                 v_result = vdet.push(conc) if vdet else {'v_prob': 0.0, 'v_active': False}
 
                 if v_result.get('v_active'):
@@ -1025,8 +1027,8 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             eeg_arr = np.array(buf[-WIN:]).T   # (6, 256)
             eeg_eeg = eeg_arr[MUSE_EEG_IDX]    # (4, 256) active EEG only
 
-            # Preprocess at Muse sample rate (256 Hz)
-            clean, artifacts = preprocess(eeg_eeg, fs=FS_MUSE, notch_hz=50)
+            # Preprocess at Muse sample rate (256 Hz); frontal_idx=[1,2] = AF7,AF8 in 4-ch array
+            clean, artifacts = preprocess(eeg_eeg, fs=FS_MUSE, notch_hz=50, frontal_idx=[1, 2])
 
             # compute_frame expects 14ch; use inline 4ch band computation for Muse
             nch4 = clean.shape[0]
@@ -1067,7 +1069,7 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             # ref channels mirror avg
             channels[2] = channels[3] = avg_val
 
-            vdet = detector[0] if detector else None
+            vdet = detector
             v_result = vdet.push(bands_out['concentration']) if vdet else {'v_prob': 0.0, 'v_active': False}
 
             payload = {

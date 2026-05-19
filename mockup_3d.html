@@ -1683,8 +1683,8 @@ function simStep(){
       const etaSec = Math.ceil(framesLeft * 0.1);
       const etaEl = document.getElementById('csvEta');
       if(etaEl) etaEl.textContent = etaSec > 0 ? etaSec + 's' : '';
-      // Current label badge
-      const curRow = CFG.csvData[Math.min(CFG.csvIdx, CFG.csvData.length - 1)];
+      // Current label badge — use start of current chunk (csvIdx already advanced)
+      const curRow = CFG.csvData[Math.max(0, CFG.csvIdx - chunkSize)];
       const lbEl = document.getElementById('csvLabelBadge');
       if(lbEl && curRow && curRow.label) {
         const isConc = curRow.label.includes('conc');
@@ -2718,9 +2718,9 @@ function copyF1() {
   for(let i=1;i<CFG.csvData.length;i++){
     const p=CFG.csvData[i-1].label, c=CFG.csvData[i].label;
     if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))
-      transitions.push(Math.floor(i/cs)*0.1);
+      transitions.push(Math.floor(i/cs)*(CFG.csvSpeed||1)/10); // signal-time seconds
   }
-  const triggers = RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').map(e=>(e.t-RPT.sessionStart)/1000);
+  const triggers = RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').map(e=>(e.t-RPT.sessionStart)/1000*(CFG.csvSpeed||1));
   let tp=0; const used=new Set();
   transitions.forEach(ts=>{
     for(let ti=0;ti<triggers.length;ti++){
@@ -2738,21 +2738,21 @@ function recalcValidation() {
   if(!CFG.csvData || !CFG.csvData.length || CFG.csvData[0].label === null) return;
   const dt = parseFloat(document.getElementById('dtTolerance')?.value) || 1.0;
   const chunkSize = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
-  const frameWallSec = 0.1; // wall-clock seconds per frame (fixed 10Hz simStep)
+  const spd = CFG.csvSpeed || 1;
 
-  // Find relaxed→concentrated transitions only (V-pattern fires at LOW→HIGH crossing)
+  // Find relaxed→concentrated transitions; timestamps in signal-time seconds
   const transitions = [];
   for(let i = 1; i < CFG.csvData.length; i++) {
     const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
     if(prev && cur && prev !== cur &&
        prev.toLowerCase().includes('relax') && cur.toLowerCase().includes('conc')) {
       const chunkIdx = Math.floor(i / chunkSize);
-      transitions.push({ tSec: chunkIdx * frameWallSec, from: prev, to: cur });
+      transitions.push({ tSec: chunkIdx * spd / 10, from: prev, to: cur }); // signal-time seconds
     }
   }
 
-  // V-trigger timestamps as seconds since playback start (ACTIVATED/DEACTIVATED only; exclude MARKER_N)
-  const triggers = RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').map(e => (e.t - RPT.sessionStart) / 1000);
+  // V-trigger timestamps in signal-time seconds (wall-clock elapsed × playback speed)
+  const triggers = RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').map(e => (e.t - RPT.sessionStart) / 1000 * spd);
 
   // TP: each transition matched by a trigger within ±dt
   let tp = 0;
@@ -2794,7 +2794,7 @@ function exportCSV(){
       const prev = CFG.csvData[i-1].label, cur = CFG.csvData[i].label;
       if(prev && cur && prev !== cur &&
          prev.toLowerCase().includes('relax') && cur.toLowerCase().includes('conc'))
-        labelTransitions.push({ tSec: Math.floor(i/chunkSize)*0.1, from: prev, to: cur });
+        labelTransitions.push({ tSec: Math.floor(i/chunkSize)*(CFG.csvSpeed||1)/10, from: prev, to: cur }); // signal-time s
     }
   }
   const header = hasCsvLabels
@@ -2802,7 +2802,7 @@ function exportCSV(){
     : 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)';
   const rows=[header];
   RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').forEach(e=>{
-    const t=((e.t-RPT.sessionStart)/1000);
+    const t=((e.t-RPT.sessionStart)/1000*(CFG.csvSpeed||1)); // signal-time seconds
     const base=`${t.toFixed(1)},${e.type},${e.concAtEvent.toFixed(1)},${e.peakConc??''},${e.peakDelay??''}`;
     if(hasCsvLabels){
       const nearest=labelTransitions.reduce((a,b)=>Math.abs(b.tSec-t)<Math.abs(a.tSec-t)?b:a,{tSec:Infinity,from:'',to:''});
@@ -3169,7 +3169,7 @@ function detectVPatternsPure(data, hz, thLow, thHigh, dt, speed) {
       if(vLow&&elapsed>dt)vLow=false;
       if(vLow&&avg>thHigh){
         const sl=hist.length>3?(hist[hist.length-1]-hist[hist.length-4])/3:0;
-        if(elapsed<dt&&sl>0.3){events.push(ci*0.1);vCd=Math.round(dt*10/(speed||1));}
+        if(elapsed<dt&&sl>0.3){events.push(ci*(speed||1)/10);vCd=Math.round(dt*10/(speed||1));}
         vLow=false;
       }
     }
@@ -3190,7 +3190,7 @@ function findBestThresholds() {
   const trans = [];
   for(let i=1;i<CFG.csvData.length;i++){
     const p=CFG.csvData[i-1].label, c=CFG.csvData[i].label;
-    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*0.1);
+    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*(CFG.csvSpeed||1)/10);
   }
   if(!trans.length){
     if(btn){btn.disabled=false;btn.textContent='⚡ FIND BEST THRESHOLDS';}
@@ -3208,7 +3208,7 @@ function findBestThresholds() {
   for(const dt of dtCands) {
     for(const tl of thLows) {
       for(const th of thHighs) {
-        if(tl >= th - 10) continue; // require at least 10% gap
+        if(tl >= th) continue; // require thLow < thHigh
         const trigs = detectVPatternsPure(CFG.csvData, CFG.csvHz, tl, th, dt, CFG.csvSpeed);
         let tp=0; const used=new Set();
         trans.forEach(ts=>{
@@ -3276,7 +3276,7 @@ function calcROCPoints() {
   const trans=[];
   for(let i=1;i<CFG.csvData.length;i++){
     const p=CFG.csvData[i-1].label,c=CFG.csvData[i].label;
-    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*0.1);
+    if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*(CFG.csvSpeed||1)/10);
   }
   if(!trans.length) return null;
   const dtVals=[0.25,0.5,0.75,1,1.5,2,2.5,3,4,5];
@@ -3356,7 +3356,7 @@ function calcCrossVal(K=5) {
     const trans=[];
     for(let i=1;i<val.length;i++){
       const p=val[i-1].label,c=val[i].label;
-      if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*0.1);
+      if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc')) trans.push(Math.floor(i/cs)*(CFG.csvSpeed||1)/10);
     }
     const trigs=detectVPatternsPure(val,CFG.csvHz,CFG.thLow,CFG.thHigh,CFG.dt,CFG.csvSpeed);
     let tp=0; const used=new Set();
@@ -3731,7 +3731,7 @@ function runBatchCSV(input){
         const data=rows.map(r=>{const nv=cStats.map(({col,mn,rng})=>{const v=parseFloat(r[col]);return isNaN(v)?50:(rng>0?((v-mn)/rng)*100:50);});return{val:nv.reduce((a,b)=>a+b,0)/nv.length,label:(r[lblCol]||'').trim().toLowerCase()};}).filter(d=>!isNaN(d.val));
         const cs=Math.max(1,Math.round(hz/10*(CFG.csvSpeed||1)));
         const trans=[];
-        for(let i=1;i<data.length;i++){const p=data[i-1].label,c=data[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))trans.push(Math.floor(i/cs)*0.1);}
+        for(let i=1;i<data.length;i++){const p=data[i-1].label,c=data[i].label;if(p&&c&&p!==c&&p.includes('relax')&&c.includes('conc'))trans.push(Math.floor(i/cs)*(CFG.csvSpeed||1)/10);}
         const trigs=detectVPatternsPure(data,hz,CFG.thLow,CFG.thHigh,CFG.dt,CFG.csvSpeed||1);
         let tp=0;const used=new Set();
         trans.forEach(ts=>{for(let ti=0;ti<trigs.length;ti++){if(!used.has(ti)&&Math.abs(trigs[ti]-ts)<=dt){tp++;used.add(ti);break;}}});
