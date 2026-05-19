@@ -828,7 +828,7 @@ function _fitCanvas(cv,W,H,applyStyle){
 // ══════════════════════════════════════════════════════════
 //  SESSION TRACKER
 // ══════════════════════════════════════════════════════════
-const RPT = { sessionStart:Date.now(), events:[], peaks:[], _lastAvg:50, _rising:false, _sum:0, _count:0 };
+const RPT = { sessionStart:Date.now(), events:[], peaks:[], timeline:[], _lastAvg:50, _rising:false, _sum:0, _count:0 };
 function rptTick(avg) {
   if (RPT._rising && avg < RPT._lastAvg - 1) {
     RPT.peaks.push({t:Date.now(),conc:RPT._lastAvg});
@@ -837,6 +837,16 @@ function rptTick(avg) {
   RPT._rising = avg > RPT._lastAvg;
   RPT._lastAvg = avg;
   RPT._sum += avg; RPT._count++;
+  // Full-session timeline: store every sample (max 7200 = 12min @10Hz)
+  RPT.timeline.push({t:Date.now(), v:avg, lbl:_currentCsvLabel()});
+  if(RPT.timeline.length > 7200) RPT.timeline.shift();
+}
+function _currentCsvLabel(){
+  if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done')&&CFG.csvData&&CFG.csvData.length){
+    const i=Math.min(CFG.csvIdx,CFG.csvData.length-1);
+    return CFG.csvData[i]?.label||null;
+  }
+  return null;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -953,7 +963,7 @@ function onDeviceChange() {
   if(CAL.active){CAL.active=false;document.getElementById('calModal').classList.remove('show');}
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG.csvBatchMode=false; CFG._lastStepTime=0; frame=0;
   const atRow=document.getElementById('autoTuneRow'); if(atRow) atRow.style.display='none';
-  RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
+  RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT.timeline=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(Math.max(14,prof.nCh)).fill(50); CFG.cqVals=new Float32Array(prof.nCh).fill(0.88);
   CFG.electrodes=prof.electrodes; CFG._lastVActive=false;
 
@@ -1137,7 +1147,7 @@ function loadCSV(input) {
       // Reset session state (reuse existing logic)
       vPhase=null;
       CFG.history = []; CFG.vLow = false; CFG.vLowTime = 0; CFG.vLowCsvIdx = 0; CFG.vCooldown = 0; CFG._lastStepTime = 0;
-      RPT.sessionStart = Date.now(); RPT.events = []; RPT.peaks = []; RPT._lastAvg = 50; RPT._rising = false; RPT._sum = 0; RPT._count = 0;
+      RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT.timeline=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
       CFG.vals = new Float32Array(14).fill(50);
       bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
 
@@ -1177,7 +1187,7 @@ function replayCSV() {
   CFG.csvPaused = false;
   const _pb=document.getElementById('csvPauseBtn'); if(_pb){_pb.textContent='⏸';_pb.style.color='#40cc90';}
   CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
-  RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
+  RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT.timeline=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
   CFG.vals=new Float32Array(14).fill(50);
   bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
   CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true; CFG.chHistory=[];
@@ -1322,7 +1332,7 @@ function _parseCSVText(text, filename) {
       const _pbU=document.getElementById('csvPauseBtn'); if(_pbU){_pbU.textContent='⏸';_pbU.style.color='#40cc90';}
       vPhase=null;
       CFG.history=[]; CFG.vLow=false; CFG.vLowTime=0; CFG.vLowCsvIdx=0; CFG.vCooldown=0; CFG._lastStepTime=0;
-      RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
+      RPT.sessionStart=Date.now(); RPT.events=[]; RPT.peaks=[]; RPT.timeline=[]; RPT._lastAvg=50; RPT._rising=false; RPT._sum=0; RPT._count=0;
       CFG.vals=new Float32Array(14).fill(50);
       bands={delta:50,theta:40,alpha:50,beta:50,gamma:30,engagement_index:null,faa:null,emg_warn:false,concentration:null,meditation:null,poor_signal:0};
       CFG.csvIdx=0; CFG.dataSource='csv'; CFG.csvBatchMode=true; CFG.chHistory=[];
@@ -2612,45 +2622,32 @@ function showReport(){
 }
 
 function drawReportTimeline() {
-  const hist = CFG.history;
+  const hist = RPT.timeline;
   const wrap = document.getElementById('reportTimelineWrap');
   if(!hist.length){if(wrap)wrap.style.display='none';return;}
   if(wrap) wrap.style.display = 'block';
   const cv = document.getElementById('reportTimeline');
   if(!cv) return;
-  // Use natural rendered width; canvas pixels need to match
   const W = cv.parentElement?.clientWidth || 456, H = 56;
   const ctx = _fitCanvas(cv, W, H, true);
   const pL=26, pR=4, pT=3, pB=9;
   ctx.clearRect(0,0,W,H);
   const span = hist.length - 1 || 1;
+  const totalMs = Math.max(1, (hist[hist.length-1].t - RPT.sessionStart));
 
-  // CSV label background zones — aligned to the same history window shown by the line
-  if((CFG.dataSource==='csv'||CFG.dataSource==='csv_done') && CFG.csvData && CFG.csvData.length && CFG.csvData[0].label !== null) {
-    const cs = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
-    const endFrame = Math.ceil(CFG.csvIdx / cs); // last played frame
-    const startFrame = Math.max(0, endFrame - hist.length); // first visible frame
-    let prevLbl = null, zoneStart = startFrame;
-    const drawZoneRpt = (lbl, x0, x1) => {
-      if(lbl === null) return;
-      ctx.fillStyle = lbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
-      ctx.fillRect(Math.max(pL, x0), pT, Math.min(W-pR, x1) - Math.max(pL, x0), H-pT-pB);
+  // CSV label background zones — read stored lbl directly from timeline entries
+  if(hist.some(h=>h.lbl !== null && h.lbl !== undefined)) {
+    let prevLbl = null, zoneStart = 0;
+    const flushZone = (endIdx) => {
+      if(prevLbl === null) return;
+      ctx.fillStyle = prevLbl.includes('conc') ? 'rgba(40,200,100,0.09)' : 'rgba(60,100,255,0.09)';
+      const x0 = pL + (zoneStart/span)*(W-pL-pR);
+      const x1 = pL + (endIdx/span)*(W-pL-pR);
+      ctx.fillRect(Math.max(pL,x0), pT, Math.min(W-pR,x1)-Math.max(pL,x0), H-pT-pB);
     };
-    for(let f = startFrame; f <= endFrame; f++) {
-      const row = CFG.csvData[Math.min(f * cs, CFG.csvData.length - 1)];
-      const lbl = row ? row.label : null;
-      if(lbl !== prevLbl) {
-        if(prevLbl !== null) {
-          const x0 = pL + ((zoneStart - startFrame) / span) * (W - pL - pR);
-          const x1 = pL + ((f - startFrame) / span) * (W - pL - pR);
-          drawZoneRpt(prevLbl, x0, x1);
-        }
-        zoneStart = f; prevLbl = lbl;
-      }
-    }
-    if(prevLbl !== null) {
-      const x0 = pL + ((zoneStart - startFrame) / span) * (W - pL - pR);
-      drawZoneRpt(prevLbl, x0, W - pR);
+    for(let i=0; i<=hist.length; i++) {
+      const lbl = i < hist.length ? hist[i].lbl : null;
+      if(lbl !== prevLbl) { flushZone(i); zoneStart=i; prevLbl=lbl; }
     }
   }
 
@@ -2666,7 +2663,7 @@ function drawReportTimeline() {
   const fg=ctx.createLinearGradient(0,pT,0,H-pB);
   fg.addColorStop(0,'rgba(64,140,255,0.14)'); fg.addColorStop(1,'rgba(64,96,200,0.01)');
   ctx.beginPath();
-  hist.forEach((v,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  hist.forEach((h,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-h.v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
   ctx.lineTo(W-pR,H-pB); ctx.lineTo(pL,H-pB); ctx.closePath();
   ctx.fillStyle=fg; ctx.fill();
 
@@ -2674,18 +2671,16 @@ function drawReportTimeline() {
   const lg=ctx.createLinearGradient(pL,0,W-pR,0);
   lg.addColorStop(0,'#4060cc'); lg.addColorStop(.5,'#40cc80'); lg.addColorStop(1,'#ff8040');
   ctx.strokeStyle=lg; ctx.lineWidth=1.5; ctx.beginPath();
-  hist.forEach((v,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
+  hist.forEach((h,i)=>{const x=pL+(i/span)*(W-pL-pR),y=pT+(1-h.v/100)*(H-pT-pB);i===0?ctx.moveTo(x,y):ctx.lineTo(x,y);});
   ctx.stroke();
 
-  // V-event markers (orange) and experiment MARKER events (purple)
+  // V-event markers and experiment MARKER events — session-relative positioning (no wall-clock drift)
   RPT.events.forEach(ev=>{
-    const age=(Date.now()-ev.t)/1000, maxAge=span*CFG._dt;
-    if(age>maxAge) return;
-    const xi=span-age/CFG._dt;
-    if(xi<0||xi>span) return;
-    const x=pL+(xi/span)*(W-pL-pR);
-    const isMarker=ev.type.startsWith('MARKER');
-    const col=isMarker?'rgba(160,100,255,0.7)':'rgba(255,160,60,0.75)';
+    const frac = (ev.t - RPT.sessionStart) / totalMs;
+    if(frac < 0 || frac > 1.02) return;
+    const x = pL + Math.min(frac, 1) * (W - pL - pR);
+    const isMarker = ev.type.startsWith('MARKER');
+    const col = isMarker ? 'rgba(160,100,255,0.7)' : 'rgba(255,160,60,0.75)';
     ctx.strokeStyle=col; ctx.lineWidth=0.9; ctx.setLineDash(isMarker?[1,3]:[2,2]);
     ctx.beginPath(); ctx.moveTo(x,pT); ctx.lineTo(x,H-pB); ctx.stroke(); ctx.setLineDash([]);
     if(!isMarker){
@@ -2697,9 +2692,11 @@ function drawReportTimeline() {
   // Y-axis labels
   ctx.font='6px Courier New'; ctx.textAlign='right'; ctx.fillStyle='rgba(100,140,255,0.38)';
   ctx.fillText('100',pL-2,pT+4); ctx.fillText('50',pL-2,pT+(H-pT-pB)/2+3); ctx.fillText('0',pL-2,H-pB);
-  // Time labels
+  // Time labels spanning full session duration
+  const totalSec = totalMs / 1000;
   ctx.textAlign='left'; ctx.fillText('0s',pL,H-1);
-  ctx.textAlign='right'; ctx.fillText(((span)*CFG._dt).toFixed(0)+'s',W-pR,H-1);
+  if(totalSec > 10) { ctx.textAlign='center'; ctx.fillText((totalSec/2).toFixed(0)+'s',(pL+W-pR)/2,H-1); }
+  ctx.textAlign='right'; ctx.fillText(totalSec.toFixed(0)+'s',W-pR,H-1);
 }
 
 function copyF1() {
