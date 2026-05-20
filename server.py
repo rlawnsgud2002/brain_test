@@ -86,6 +86,7 @@ class MuseSource:
     """
     def __init__(self):
         self.inlet = None
+        self._fallback = SimSource()
         self._try_connect()
 
     def _try_connect(self):
@@ -105,13 +106,14 @@ class MuseSource:
         if self.inlet:
             sample, _ = self.inlet.pull_sample(timeout=0.0)
             if sample:
-                # TP9=0, AF7=1, AF8=2, TP10=3
-                vals = [max(0, min(100, (v + 500) / 10)) for v in sample[:4]]
-                avg = sum(vals) / len(vals)
+                # TP9=0, AF7=1, AF8=2, TP10=3 — pad to exactly 4 if stream is short
+                raw = list(sample[:4]) + [0] * 4
+                vals = [max(0, min(100, (v + 500) / 10)) for v in raw[:4]]
+                avg = sum(vals) / 4
                 bands = {'delta':40,'theta':35,'alpha':50,'beta':35,'gamma':15}
                 return vals + [50]*10, bands  # pad to 14ch
-        # Fallback simulation
-        return SimSource().step()
+        # Fallback simulation — reuse stateful instance for continuity
+        return self._fallback.step()
 
 # ── TGAM/NeuroSky Source (stub — requires serial) ─────────
 class TGAMSource:

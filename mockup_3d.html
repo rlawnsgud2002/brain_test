@@ -1624,7 +1624,8 @@ window.addEventListener('mousemove',e=>{
 //  RESIZE
 // ══════════════════════════════════════════════════════════
 function resize(){renderer.setSize(window.innerWidth,window.innerHeight);camera.aspect=window.innerWidth/window.innerHeight;camera.updateProjectionMatrix();}
-window.addEventListener('resize',resize); resize();
+let _resizeTimer;
+window.addEventListener('resize',()=>{clearTimeout(_resizeTimer);_resizeTimer=setTimeout(resize,150);}); resize();
 
 // ══════════════════════════════════════════════════════════
 //  EEG SIMULATION
@@ -1845,6 +1846,7 @@ function toggleControl(concAtEvent=50){
   const evtTime=Date.now();
   const entry={t:evtTime,concAtEvent,type:controlActive?'ACTIVATED':'DEACTIVATED',peakConc:null,peakDelay:null};
   RPT.events.push(entry);
+  if(RPT.events.length > 10000) RPT.events.shift();
 
   if(CFG.csvBatchMode) return; // suppress audio/popup during batch CSV playback
 
@@ -2956,6 +2958,7 @@ function addManualMarker(){
   EXP.markerCount++;
   if(ws&&ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'exp_marker',label:`marker_${EXP.markerCount}`}));
   RPT.events.push({t:Date.now(), concAtEvent: CFG.history[CFG.history.length-1]||50, type:`MARKER_${EXP.markerCount}`, peakConc:null, peakDelay:null});
+  if(RPT.events.length > 10000) RPT.events.shift();
   const m=document.getElementById('expBarMark');
   m.style.background='rgba(255,200,50,0.4)'; setTimeout(()=>m.style.background='',300);
   showToast(`Marker ${EXP.markerCount} placed`,'#ffcc44');

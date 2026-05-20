@@ -503,7 +503,11 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
         df['_gamma'] = band_mean(30, 45)
         col_delta, col_theta = '_delta', '_theta'
         col_alpha, col_beta, col_gamma = '_alpha', '_beta', '_gamma'
-        print(f"[MENTAL] Band cols: delta={len([c for c in freq_cols if int(c.split('_')[1])/10<4])} "
+        def _safe_hz(c):
+            parts = c.split('_')
+            try: return int(parts[1]) if len(parts) > 1 else -1
+            except ValueError: return -1
+        print(f"[MENTAL] Band cols: delta={len([c for c in freq_cols if _safe_hz(c)/10<4])} "
               f"theta=... alpha=... beta=... gamma=...")
 
     if not all([col_delta, col_theta, col_alpha, col_beta]):
@@ -1116,8 +1120,14 @@ def _make_recv(ws, calibrator_holder, exp_holder):
                     msg_type = d.get('type')
 
                     if msg_type == 'settings':
-                        STATE['settings'].update(d['settings'])
-                        print(f"[WS] Settings updated: {STATE['settings']}")
+                        new_s = d.get('settings', {})
+                        if new_s.get('thLow', STATE['settings']['thLow']) >= \
+                           new_s.get('thHigh', STATE['settings']['thHigh']):
+                            await ws.send(json.dumps({'type': 'error',
+                                'message': 'Invalid settings: thLow must be < thHigh'}))
+                        else:
+                            STATE['settings'].update(new_s)
+                            print(f"[WS] Settings updated: {STATE['settings']}")
 
                     elif msg_type == 'calibrate_start':
                         if CAL_OK:
@@ -1187,8 +1197,8 @@ def _make_recv(ws, calibrator_holder, exp_holder):
                             }
                         }))
 
-                except Exception:
-                    pass
+                except Exception as e:
+                    print(f"[WS] Recv handler error: {e}")
         except websockets.exceptions.ConnectionClosed:
             pass
     return recv_loop
