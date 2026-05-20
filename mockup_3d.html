@@ -908,9 +908,9 @@ function wsConnect() {
           bands.emg_warn    = d.artifacts?.emg_warn??false;
           bands.poor_signal = d.artifacts?.poor_signal??0;
         }
-        if(d.contact_quality){
+        if(Array.isArray(d.contact_quality)){
           if(!CFG.cqVals||CFG.cqVals.length<14) CFG.cqVals=new Float32Array(14).fill(0.88);
-          d.contact_quality.forEach((q,i)=>{ CFG.cqVals[i]=Math.max(0,Math.min(1,+q)); });
+          d.contact_quality.forEach((q,i)=>{ if(i<14){const n=+q;CFG.cqVals[i]=isFinite(n)?Math.max(0,Math.min(1,n)):0;} });
         }
         if (d.vpattern?.v_active && !CFG._lastVActive) toggleControl(d.bands?.concentration??50);
         CFG._lastVActive = d.vpattern?.v_active??false;
