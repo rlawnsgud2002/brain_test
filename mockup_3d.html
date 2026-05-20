@@ -916,8 +916,8 @@ function wsConnect() {
         CFG._lastVActive = d.vpattern?.v_active??false;
         CFG.dataSource = 'ws';
       } else if (d.type === 'state_snapshot') {
-        d.channels.forEach((v,i) => { CFG.vals[i]=Math.max(0,Math.min(100,v)); });
-        if (d.bands) BANDS.forEach(k=>bands[k]=d.bands[k]);
+        if(Array.isArray(d.channels)) d.channels.forEach((v,i) => { if(i<CFG.vals.length&&isFinite(v)) CFG.vals[i]=Math.max(0,Math.min(100,v)); });
+        if (d.bands) BANDS.forEach(k=>{const v=d.bands[k]; if(isFinite(v)) bands[k]=v;});
         if (d.source) {
           const m={sim:'sim',deap:'deap',mental:'mental',mental_state:'mental',emotiv:'device'};
           const sel=document.getElementById('srcSel'), mapped=m[d.source]||'sim';
@@ -945,9 +945,11 @@ function wsConnect() {
 }
 
 function _applySettings(s) {
-  if (s.thLow !=null){CFG.thLow =s.thLow; document.getElementById('thLow').value    =CFG.thLow; document.getElementById('tlv').textContent=CFG.thLow+'%';}
-  if (s.thHigh!=null){CFG.thHigh=s.thHigh;document.getElementById('thHigh').value   =CFG.thHigh;document.getElementById('thv').textContent=CFG.thHigh+'%';}
-  if (s.dt    !=null){CFG.dt    =s.dt;    document.getElementById('dtSlider').value =CFG.dt;    document.getElementById('dtv').textContent=CFG.dt+'s';}
+  const _c=(v,lo,hi)=>{const n=+v;return isFinite(n)?Math.max(lo,Math.min(hi,n)):null;};
+  if (s.thLow !=null){const v=_c(s.thLow, 5,95); if(v!=null){CFG.thLow =v;document.getElementById('thLow').value=v;document.getElementById('tlv').textContent=v+'%';}}
+  if (s.thHigh!=null){const v=_c(s.thHigh,5,95); if(v!=null){CFG.thHigh=v;document.getElementById('thHigh').value=v;document.getElementById('thv').textContent=v+'%';}}
+  if (s.dt    !=null){const v=_c(s.dt,    1,30); if(v!=null){CFG.dt    =v;document.getElementById('dtSlider').value=v;document.getElementById('dtv').textContent=v+'s';}}
+  if(CFG.thLow>=CFG.thHigh){CFG.thLow=30;CFG.thHigh=70;document.getElementById('thLow').value=30;document.getElementById('thHigh').value=70;}
   saveSettingsLS(); // persist server-pushed settings (e.g. calibration result)
 }
 
@@ -1072,6 +1074,7 @@ function loadCSV(input) {
   if (!file) return;
   Papa.parse(file, {
     header: true, skipEmptyLines: true,
+    error: function(err) { showToast('CSV parse error: ' + (err.message||err), '#ff8040'); },
     complete: function(res) {
       const rows = res.data;
       if (!rows.length) { showToast('CSV is empty', '#ff8040'); return; }
@@ -1273,6 +1276,7 @@ function loadCSVFromUrl(filename, label) {
 function _parseCSVText(text, filename) {
   Papa.parse(text, {
     header: true, skipEmptyLines: true,
+    error: function(err) { showToast('CSV parse error: ' + (err.message||err), '#ff8040'); },
     complete: function(res) {
       const rows = res.data;
       if (!rows.length) { showToast('CSV is empty', '#ff8040'); return; }
@@ -2278,9 +2282,12 @@ function saveSettingsLS(){
 function loadSettingsLS(){
   try{
     const d=JSON.parse(localStorage.getItem('eeg_cfg')||'{}');
-    if(d.thLow!=null){CFG.thLow=d.thLow;const el=document.getElementById('thLow');if(el){el.value=CFG.thLow;document.getElementById('tlv').textContent=CFG.thLow+'%';}}
-    if(d.thHigh!=null){CFG.thHigh=d.thHigh;const el=document.getElementById('thHigh');if(el){el.value=CFG.thHigh;document.getElementById('thv').textContent=CFG.thHigh+'%';}}
-    if(d.dt!=null){CFG.dt=d.dt;const el=document.getElementById('dtSlider');if(el){el.value=CFG.dt;document.getElementById('dtv').textContent=CFG.dt+'s';}}
+    const _clamp=(v,lo,hi,def)=>{const n=+v;return isFinite(n)?Math.max(lo,Math.min(hi,n)):def;};
+    if(d.thLow!=null){CFG.thLow=_clamp(d.thLow,5,95,30);const el=document.getElementById('thLow');if(el){el.value=CFG.thLow;document.getElementById('tlv').textContent=CFG.thLow+'%';}}
+    if(d.thHigh!=null){CFG.thHigh=_clamp(d.thHigh,5,95,70);const el=document.getElementById('thHigh');if(el){el.value=CFG.thHigh;document.getElementById('thv').textContent=CFG.thHigh+'%';}}
+    if(d.dt!=null){CFG.dt=_clamp(d.dt,1,30,15);const el=document.getElementById('dtSlider');if(el){el.value=CFG.dt;document.getElementById('dtv').textContent=CFG.dt+'s';}}
+    // Guarantee thLow < thHigh even if storage was tampered
+    if(CFG.thLow>=CFG.thHigh){CFG.thLow=30;CFG.thHigh=70;}
     if(d.activeDevice){const sel=document.getElementById('devSel');if(sel&&sel.value!==d.activeDevice){sel.value=d.activeDevice;onDeviceChange();}}
     if(d.sessionName){const sn=document.getElementById('sessionName');if(sn)sn.value=d.sessionName;}
   }catch(_){}
@@ -2497,17 +2504,18 @@ function checkPw(){
 }
 function updateCfg(){
   const tl=+document.getElementById('thLow').value, th=+document.getElementById('thHigh').value;
-  if(tl>=th){return;}
+  const dtV=+document.getElementById('dtSlider').value;
+  if(!isFinite(tl)||!isFinite(th)||!isFinite(dtV)||tl>=th) return;
   CFG.thLow=tl;
   CFG.thHigh=th;
-  CFG.dt=+document.getElementById('dtSlider').value;
+  CFG.dt=dtV;
   document.getElementById('tlv').textContent=CFG.thLow+'%';
   document.getElementById('thv').textContent=CFG.thHigh+'%';
   document.getElementById('dtv').textContent=CFG.dt+'s';
   if(ws&&ws.readyState===WebSocket.OPEN) ws.send(JSON.stringify({type:'settings',settings:{thLow:CFG.thLow,thHigh:CFG.thHigh,dt:CFG.dt,slope:0.3}}));
   saveSettingsLS();
 }
-function updateManual(){CFG.manVal=+document.getElementById('manSlider').value;CFG.manual=true;document.getElementById('mv').textContent=CFG.manVal+'%';}
+function updateManual(){const v=+document.getElementById('manSlider').value;if(!isFinite(v))return;CFG.manVal=Math.max(0,Math.min(100,v));CFG.manual=true;document.getElementById('mv').textContent=CFG.manVal+'%';}
 function forceV(){
   const btn=[...document.querySelectorAll('button')].find(b=>b.textContent.includes('FORCE'));
   if(CFG.dataSource==='ws'){showToast('Live WS mode — V-pattern forced by server only','#6080ff');if(btn){btn.style.background='rgba(60,80,255,0.22)';setTimeout(()=>btn.style.background='',600);}return;}
@@ -3721,6 +3729,7 @@ function runBatchCSV(input){
     if(idx>=files.length){_showBatchReport();return;}
     const file=files[idx++];
     const reader=new FileReader();
+    reader.onerror=()=>{_batchResults.push({name:file.name,f1:null,reason:'read error'});nextFile();};
     reader.onload=ev=>{
       Papa.parse(ev.target.result,{header:true,skipEmptyLines:true,complete:res=>{
         const rows=res.data; if(!rows.length){_batchResults.push({name:file.name,f1:null,reason:'empty'});nextFile();return;}

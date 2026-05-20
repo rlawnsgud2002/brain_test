@@ -403,6 +403,10 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
     n_trials = data['data'].shape[0]
     if trial < 0 or trial >= n_trials:
         raise ValueError(f"Trial {trial} out of range — file has {n_trials} trials (0–{n_trials-1})")
+    n_ch = data['data'].shape[1]
+    max_idx = max(DEAP_IDX) if len(DEAP_IDX) else 31
+    if n_ch <= max_idx:
+        raise ValueError(f"DEAP file has only {n_ch} channels — need at least {max_idx+1} for Emotiv mapping")
     eeg_all = data['data'][trial, :32, :]
     labels  = data['labels'][trial]
     emotiv  = eeg_all[DEAP_IDX, :]
@@ -560,12 +564,16 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
     interval = 0.5 / speed  # ~2 rows/s at real speed
 
     for i, row in df.iterrows():
+        # Skip rows with NaN in any band column — NaN would propagate to client and break JSON.parse
+        if pd.isna(row[col_delta]) or pd.isna(row[col_theta]) or \
+           pd.isna(row[col_alpha]) or pd.isna(row[col_beta]):
+            continue
         delta = float(row[col_delta]) * sc_d
         theta = float(row[col_theta]) * sc_t
         alpha = float(row[col_alpha]) * sc_a
         beta  = float(row[col_beta])  * sc_b
-        gamma = (float(row[col_gamma]) * sc_g) if col_gamma else alpha * 0.5
-        lbl   = int(row['_label_int'])
+        gamma = (float(row[col_gamma]) * sc_g) if col_gamma and not pd.isna(row[col_gamma]) else alpha * 0.5
+        lbl   = int(row['_label_int']) if not pd.isna(row['_label_int']) else 2
 
         ratio = beta / (alpha + 1e-9)
         conc  = float(np.clip((ratio - 0.3) * 40 + 50, 0, 100))
@@ -776,6 +784,8 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
                 print(f"[EMOTIV] Warning: channels not found in Cortex cols: {missing}")
                 await ws.send(json.dumps({'type':'status',
                     'message':f'Warning: missing Cortex channels {missing}. Check headset firmware.'}))
+            if all(i is None for i in ch_order):
+                raise RuntimeError('No Emotiv channels found in Cortex stream. Check headset firmware/SDK.')
 
             # Sliding-window buffer: emit every EMIT_EVERY samples, compute over
             # up to COMPUTE_WIN samples for better frequency resolution (≥ 0.5s)
