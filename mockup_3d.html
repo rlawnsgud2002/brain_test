@@ -1510,7 +1510,10 @@ canvas3d.addEventListener('touchmove',e=>{
   else if(e.touches.length===2&&lastPinchDist!=null){const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);tZoom=Math.max(1.8,Math.min(6,tZoom-(d-lastPinchDist)*.01));lastPinchDist=d;}
   e.preventDefault();
 },{passive:false});
-canvas3d.addEventListener('touchend',e=>{if(e.touches.length===0){lastTouch=null;lastPinchDist=null;}});
+canvas3d.addEventListener('touchend',e=>{
+  if(e.touches.length===0){lastTouch=null;lastPinchDist=null;}
+  else if(e.touches.length===1){lastTouch=e.touches[0];lastPinchDist=null;} // 2→1: continue rotating with remaining finger
+});
 canvas3d.addEventListener('dblclick',()=>{tRotX=0.3;tRotY=Math.PI;tZoom=3.5;});
 
 // ══════════════════════════════════════════════════════════
@@ -1881,15 +1884,16 @@ function toggleControl(concAtEvent=50){
 // ══════════════════════════════════════════════════════════
 function update3D(){
   const dev=CFG.activeDevice;
+  const _clT=v=>{const n=+v/100;return isFinite(n)?Math.max(0,Math.min(1,n)):0.5;};
   if(dev==='tgam'){
-    const t=CFG.vals[0]/100,c=jet(t);
+    const t=_clT(CFG.vals[0]),c=jet(t);
     tgamEMat.color.setRGB(c.r,c.g,c.b); tgamEMat.emissive.setRGB(c.r*.6,c.g*.6,c.b*.6); tgamEMat.emissiveIntensity=0.5+t*1.5;
     tgamGlowMat.color.setRGB(c.r,c.g,c.b); tgamGlowMat.opacity=0.4+t*.8;
     const s=0.35+t*.6; tgamGlow.scale.set(s,s,1);
     tgamArcMat.color.setRGB(0.3+c.r*.5,0.3+c.g*.5,0.3+c.b*.5);
   } else if(dev==='muse'){
     MUSE_ELECS.forEach((e,i)=>{
-      const t=CFG.vals[i]/100,c=e.ref?{r:.25,g:.25,b:.35}:jet(t);
+      const t=_clT(CFG.vals[i]),c=e.ref?{r:.25,g:.25,b:.35}:jet(t);
       museEMats[i].color.setRGB(c.r,c.g,c.b);
       if(!e.ref){museEMats[i].emissive.setRGB(c.r*.5,c.g*.5,c.b*.5);museEMats[i].emissiveIntensity=0.4+t*1.2;museGlows[i].material.color.setRGB(c.r,c.g,c.b);museGlows[i].material.opacity=0.3+t*.7;const s=0.28+t*.45;museGlows[i].scale.set(s,s,1);}
     });
@@ -1897,7 +1901,7 @@ function update3D(){
     museBandMat.color.setRGB(0.4+bc.r*.4,0.4+bc.g*.4,0.4+bc.b*.4);
   } else {
     EMOTIV_ELECS.forEach((_,i)=>{
-      const t=CFG.vals[i]/100,c=jet(t);
+      const t=_clT(CFG.vals[i]),c=jet(t);
       eMats[i].color.setRGB(c.r,c.g,c.b); eMats[i].emissive.setRGB(c.r*.5,c.g*.5,c.b*.5); eMats[i].emissiveIntensity=0.4+t*1.2;
       glowMeshes[i].material.color.setRGB(c.r,c.g,c.b); glowMeshes[i].material.opacity=0.3+t*.7;
       const s=0.25+t*.45; glowMeshes[i].scale.set(s,s,1);
@@ -2863,7 +2867,7 @@ function _handleCalibration(d){
   else if(state==='done'){
     CAL.active=false; bar.style.width='100%'; document.getElementById('calTimer').textContent='✓'; document.getElementById('calPhaseLabel').textContent='COMPLETE';
     document.getElementById('calCancelBtn').style.display='none'; document.getElementById('calCloseBtn').style.display='inline-block';
-    if(d.result){
+    if(d.result && d.result.thresholds && d.result.quality && d.result.relax && d.result.focus){
       const r=d.result,t=r.thresholds,q=r.quality;
       document.getElementById('calResult').style.display='block';
       document.getElementById('calResult').innerHTML=`Relax: <b>${r.relax.conc_mean}</b> ± ${r.relax.conc_std}<br>Focus: <b>${r.focus.conc_mean}</b> ± ${r.focus.conc_std}<br>Low=<b>${t.th_low}</b> High=<b>${t.th_high}</b> Slope=<b>${t.slope}</b><br>Quality: <b style="color:${q.grade==='A'?'#80ffb0':q.grade==='B'?'#80d0ff':'#ffb080'}">${q.grade}</b> (${q.score}/100)`;
@@ -3670,13 +3674,17 @@ function _buildCompareTable(sel){
 }
 function clearHistory(){
   _openIDB(db=>{
-    db.transaction('sessions','readwrite').objectStore('sessions').clear();
-    _histSessions=[];
-    document.getElementById('histCompareSection').style.display='none';
-    document.getElementById('compareBtn').style.display='none';
-    document.getElementById('f1TrendWrap').style.display='none';
-    showToast('Session history cleared','#ffcc44');
-    document.getElementById('historyList').innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet.</div>';
+    const tx=db.transaction('sessions','readwrite');
+    tx.onerror=e=>showToast('Clear failed: '+(e.target.error||'storage error'),'#ff8040');
+    tx.oncomplete=()=>{
+      _histSessions=[];
+      document.getElementById('histCompareSection').style.display='none';
+      document.getElementById('compareBtn').style.display='none';
+      document.getElementById('f1TrendWrap').style.display='none';
+      showToast('Session history cleared','#ffcc44');
+      document.getElementById('historyList').innerHTML='<div style="font-size:10px;color:#6480cc;padding:10px 0">No sessions saved yet.</div>';
+    };
+    tx.objectStore('sessions').clear();
   });
 }
 

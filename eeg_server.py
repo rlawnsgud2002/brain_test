@@ -245,6 +245,9 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=
     # Baseline-relative concentration
     if baseline:
         b_ei = baseline.get('engagement_index', 0.5)
+        # Guard against corrupted baseline (NaN/inf/non-positive from old calibration data)
+        if not np.isfinite(b_ei) or b_ei <= 0:
+            b_ei = 0.5
         # Scale so that baseline EI → 30%, focused EI → 70%+
         conc = float(np.clip((ei / (b_ei + 1e-9) - 0.5) * 60 + 50, 0, 100))
     else:
@@ -363,6 +366,10 @@ async def _push_cal(ws, cal_holder, bands):
             rb = r.get('relax', {}).get('bands', {})
             if rb:
                 ei_base = rb.get('beta', 1) / (rb.get('alpha', 1) + rb.get('theta', 1) + 1e-9)
+                # Guard against NaN/inf from malformed bands; clamp to sane range
+                if not np.isfinite(ei_base) or ei_base <= 0:
+                    ei_base = 0.5
+                ei_base = max(0.1, min(10.0, ei_base))
                 STATE['baseline'] = {'engagement_index': round(ei_base, 4)}
                 print(f"[CAL] Baseline EI set: {STATE['baseline']['engagement_index']:.4f}")
             await _send({'type': 'settings', 'settings': STATE['settings']})
