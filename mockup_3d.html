@@ -588,7 +588,7 @@
     </div>
     <div class="slider-row">
       <label>Δt Window<span id="dtv" style="color:#a0c0ff">15s</span></label>
-      <input type="range" id="dtSlider" min="1" max="30" value="15" oninput="updateCfg()">
+      <input type="range" id="dtSlider" min="1" max="30" step="0.5" value="15" oninput="updateCfg()">
     </div>
     <div class="slider-row">
       <label>Manual Conc<span id="mv" style="color:#a0c0ff">50%</span></label>
@@ -3250,7 +3250,7 @@ function findBestThresholds() {
     CFG.thLow=best.thLow; CFG.thHigh=best.thHigh; CFG.dt=best.dt;
     document.getElementById('thLow').value=best.thLow;
     document.getElementById('thHigh').value=best.thHigh;
-    document.getElementById('dtSlider').value=Math.max(1,Math.min(30,Math.round(best.dt)));
+    document.getElementById('dtSlider').value=Math.max(1,Math.min(30,best.dt));
     document.getElementById('tlv').textContent=best.thLow+'%';
     document.getElementById('thv').textContent=best.thHigh+'%';
     document.getElementById('dtv').textContent=best.dt+'s';
