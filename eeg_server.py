@@ -576,6 +576,7 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
 
     interval = 0.5 / speed  # ~2 rows/s at real speed
 
+    sent = 0  # count of frames actually emitted (skipped NaN rows excluded)
     for i, row in df.iterrows():
         # Skip rows with NaN in any band column — NaN would propagate to client and break JSON.parse
         if pd.isna(row[col_delta]) or pd.isna(row[col_theta]) or \
@@ -601,14 +602,16 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
             'gamma': round(gamma, 2),
             'concentration': round(conc, 2)
         }
+        # Use original df index for progress (matches file position) but monotonic frame counter for timestamp
         frame = {
             'type': 'eeg',
             'channels': [round(v, 2) for v in channels],
             'bands': bands_out,
-            'progress': round(i / n, 3),
-            'timestamp': round(i * 0.5, 2),
+            'progress': round((i + 1) / n, 3),
+            'timestamp': round(sent * 0.5, 2),
             'label': label_names.get(lbl, 'UNKNOWN')
         }
+        sent += 1
         update_state(frame['channels'], frame['bands'])
         _add_vpattern(frame, detector)
         if cal_holder:
@@ -937,7 +940,9 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
                         bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
                         i += 3
                 else:
-                    break
+                    # Unknown code: skip 1 byte instead of aborting the whole payload —
+                    # a single bad byte shouldn't discard valid data later in the packet
+                    pass
 
         async def send_loop():
             while True:
@@ -1002,6 +1007,10 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
                         i += 1
         finally:
             send_task.cancel()
+            try:
+                await send_task
+            except (asyncio.CancelledError, Exception):
+                pass
             ser.close()
 
     except Exception as e:
@@ -1053,11 +1062,17 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
         # Buffer for 256-sample window (1s)
         WIN = 256
         buf = []
+        timeout_count = 0
+        MAX_TIMEOUTS = 5  # 5s of no samples → treat as disconnected
 
         while True:
             sample, _ = inlet.pull_sample(timeout=1.0)
             if sample is None:
+                timeout_count += 1
+                if timeout_count >= MAX_TIMEOUTS:
+                    raise RuntimeError(f"Muse LSL stream silent for {MAX_TIMEOUTS}s — disconnected?")
                 continue
+            timeout_count = 0
             buf.append(sample[:6])   # TP9, AF7, FP1, FP2, AF8, TP10
             if len(buf) < WIN:
                 continue
@@ -1140,6 +1155,10 @@ def _make_recv(ws, calibrator_holder, exp_holder):
             async for raw in ws:
                 try:
                     d = json.loads(raw)
+                    # Reject non-object payloads (arrays, strings, numbers, null) — protocol expects {type: ...}
+                    if not isinstance(d, dict):
+                        print(f"[WS] Ignoring non-object message: {type(d).__name__}")
+                        continue
                     msg_type = d.get('type')
 
                     if msg_type == 'settings':
@@ -1339,7 +1358,7 @@ def main():
                         help='Serial port for TGAM (e.g. COM3 / /dev/ttyUSB0)')
     parser.add_argument('--file',  default=None, help='Data file path')
     parser.add_argument('--trial', type=int,   default=0,   help='DEAP trial index (0-39)')
-    parser.add_argument('--speed', type=float, default=1.0, help='Playback speed multiplier')
+    parser.add_argument('--speed', type=float, default=1.0, help='Playback speed multiplier (>0)')
     parser.add_argument('--port',  type=int,   default=8765, help='WebSocket port')
     parser.add_argument('--notch', type=int,   default=50,  choices=[50,60],
                         help='Power-line notch frequency: 50 (EU, default) or 60 (US/JP)')
@@ -1350,6 +1369,14 @@ def main():
     parser.add_argument('--emotiv-id',     default=None, help='Emotiv Cortex API Client ID')
     parser.add_argument('--emotiv-secret', default=None, help='Emotiv Cortex API Client Secret')
     args = parser.parse_args()
+
+    # Validate numeric arguments — argparse only enforces type, not range
+    if args.speed <= 0:
+        parser.error(f"--speed must be > 0 (got {args.speed})")
+    if args.trial < 0:
+        parser.error(f"--trial must be >= 0 (got {args.trial})")
+    if not (1 <= args.port <= 65535):
+        parser.error(f"--port must be 1-65535 (got {args.port})")
 
     if not NUMPY_OK and args.source in ('deap','mental'):
         print("[ERROR] numpy/scipy required. pip install numpy scipy")

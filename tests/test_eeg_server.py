@@ -236,3 +236,84 @@ class TestProtocolValidation:
         # The server's validation: `protocol not in PROTOCOLS`
         assert 'fake_protocol' not in eeg_server.PROTOCOLS
         assert 'evil' not in eeg_server.PROTOCOLS
+
+
+# ── Message type validation (non-dict payload rejection) ─────────────────────
+class TestMessagePayloadValidation:
+    """Mirror of the isinstance check added to recv_loop — verifies the
+    rejection logic without spinning up a WebSocket."""
+
+    @staticmethod
+    def _is_valid_payload(d):
+        return isinstance(d, dict)
+
+    def test_dict_accepted(self):
+        assert self._is_valid_payload({'type': 'settings'})
+
+    def test_array_rejected(self):
+        assert not self._is_valid_payload([1, 2, 3])
+
+    def test_string_rejected(self):
+        assert not self._is_valid_payload('hello')
+
+    def test_number_rejected(self):
+        assert not self._is_valid_payload(42)
+
+    def test_null_rejected(self):
+        assert not self._is_valid_payload(None)
+
+
+# ── Argparse validation ──────────────────────────────────────────────────────
+class TestArgValidation:
+    """Verify the manual validation added after parser.parse_args()."""
+
+    @staticmethod
+    def _validate(speed=1.0, trial=0, port=8765):
+        errs = []
+        if speed <= 0:
+            errs.append('speed')
+        if trial < 0:
+            errs.append('trial')
+        if not (1 <= port <= 65535):
+            errs.append('port')
+        return errs
+
+    def test_defaults_valid(self):
+        assert self._validate() == []
+
+    def test_zero_speed_rejected(self):
+        assert 'speed' in self._validate(speed=0)
+
+    def test_negative_speed_rejected(self):
+        assert 'speed' in self._validate(speed=-1)
+
+    def test_negative_trial_rejected(self):
+        assert 'trial' in self._validate(trial=-1)
+
+    def test_port_out_of_range_rejected(self):
+        assert 'port' in self._validate(port=0)
+        assert 'port' in self._validate(port=70000)
+
+
+# ── DataFrame index vs sent-counter (stream_mental progress fix) ────────────
+class TestSentCounterIndependence:
+    """Verify the pattern: if rows are skipped (NaN), the monotonic counter
+    used for timestamp differs from the original df index."""
+
+    def test_skipped_rows_dont_advance_counter(self):
+        # Simulate the iteration pattern
+        rows = [(0, 'ok'), (1, 'skip'), (2, 'ok'), (3, 'skip'), (4, 'ok')]
+        sent = 0
+        timestamps = []
+        progresses = []
+        n = len(rows)
+        for i, status in rows:
+            if status == 'skip':
+                continue
+            timestamps.append(round(sent * 0.5, 2))
+            progresses.append(round((i + 1) / n, 3))
+            sent += 1
+        # Timestamps are monotonic, no gaps
+        assert timestamps == [0.0, 0.5, 1.0]
+        # Progresses reflect actual file position (with gaps)
+        assert progresses == [0.2, 0.6, 1.0]

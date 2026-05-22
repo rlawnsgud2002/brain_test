@@ -2821,6 +2821,11 @@ function exportCSV(){
   const header = hasCsvLabels
     ? 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s),LabelMatch,NearestTransition(s)'
     : 'Time(s),Type,Conc@Event(%),PeakConc(%),PeakDelay(s)';
+  // CSV cell escape: quote any field containing comma / quote / newline (RFC 4180)
+  const _csvCell = v => {
+    const s = String(v ?? '');
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
   const rows=[header];
   RPT.events.filter(e=>e.type==='ACTIVATED'||e.type==='DEACTIVATED').forEach(e=>{
     const t=((e.t-RPT.sessionStart)/1000*(CFG.csvSpeed||1)); // signal-time seconds
@@ -2834,7 +2839,7 @@ function exportCSV(){
   const histRows=['SessionTime(s),Concentration(%),Label'];
   RPT.timeline.forEach(h=>{
     const tSec=((h.t-RPT.sessionStart)/1000).toFixed(2);
-    histRows.push(`${tSec},${h.v.toFixed(1)},${h.lbl||''}`);
+    histRows.push(`${tSec},${h.v.toFixed(1)},${_csvCell(h.lbl||'')}`);
   });
   const a=document.createElement('a');
   const csvUrl=URL.createObjectURL(new Blob([rows.join('\n')+'\n\n'+histRows.join('\n')],{type:'text/csv'}));
@@ -3447,7 +3452,13 @@ function _openIDB(cb){
     _IDB.db=e.target.result; _IDB._pending=false;
     _IDB._queue.forEach(fn=>fn(_IDB.db)); _IDB._queue=[];
   };
-  req.onerror=e=>{_IDB._pending=false;_IDB._queue=[];showToast('IndexedDB 오류: '+(e.target.error||'unavailable'),'#ff8040');};
+  req.onerror=e=>{
+    _IDB._pending=false;
+    const pending=_IDB._queue; _IDB._queue=[];
+    // Invoke pending callbacks with null DB so awaiters can finish (e.g. dismiss spinners)
+    pending.forEach(fn=>{ try{ fn(null); } catch(err){ console.error(err); } });
+    showToast('IndexedDB 오류: '+(e.target.error||'unavailable'),'#ff8040');
+  };
 }
 let _sessionSaved = false; // guard against duplicate saves per session
 function saveSessionHistory(){
@@ -3470,8 +3481,10 @@ function saveSessionHistory(){
   }
 
   _openIDB(db=>{
+    if(!db){ _sessionSaved=false; return; }
     const tx=db.transaction('sessions','readwrite');
-    tx.onerror=e=>{ _sessionSaved=false; showToast('Session history save failed (storage full?): '+e.target.error,'#ff8040'); };
+    // Reset guard ONLY on async failure so the function-scope `true` set above stands on success
+    tx.onerror=e=>{ _sessionSaved=false; showToast('Session history save failed (storage full?): '+(e.target.error||''),'#ff8040'); };
     tx.objectStore('sessions').add({
       ts:Date.now(), dur, device:getProf().label,
       file:CFG.csvLastFile||null,
@@ -3486,6 +3499,7 @@ function escH(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;'
 let _histSessions = [];
 function showHistory(){
   _openIDB(db=>{
+    if(!db){ _histSessions=[]; _renderHistoryList(); document.getElementById('historyModal').classList.add('show'); return; }
     const req=db.transaction('sessions','readonly').objectStore('sessions').getAll();
     req.onsuccess=e=>{
       _histSessions=[...e.target.result].reverse();
@@ -3494,6 +3508,7 @@ function showHistory(){
       document.getElementById('compareBtn').style.display='none';
       document.getElementById('historyModal').classList.add('show');
     };
+    req.onerror=e=>showToast('History load failed: '+(e.target.error||'unknown'),'#ff8040');
   });
 }
 function _renderHistoryList(){
@@ -3522,7 +3537,7 @@ function _renderHistoryList(){
   }).join('');
 
   // F1 trend chart — show if any session has F1 data
-  const f1pts=_histSessions.filter(s=>s.f1!=null);
+  const f1pts=_histSessions.filter(s=>s.f1!=null&&isFinite(s.f1));
   const wrap=document.getElementById('f1TrendWrap');
   if(f1pts.length>=2){
     wrap.style.display='block';
@@ -3680,6 +3695,7 @@ function _buildCompareTable(sel){
 }
 function clearHistory(){
   _openIDB(db=>{
+    if(!db){ showToast('Clear failed: storage unavailable','#ff8040'); return; }
     const tx=db.transaction('sessions','readwrite');
     tx.onerror=e=>showToast('Clear failed: '+(e.target.error||'storage error'),'#ff8040');
     tx.oncomplete=()=>{
