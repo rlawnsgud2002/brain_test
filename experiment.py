@@ -97,7 +97,9 @@ class ExperimentRunner:
     """
 
     def __init__(self, protocol='short', custom_phases: Optional[List[Phase]] = None):
-        if custom_phases:
+        if custom_phases is not None:
+            if not custom_phases:
+                raise ValueError("custom_phases must contain at least one Phase")
             self.phases = custom_phases
         elif protocol in PROTOCOLS:
             self.phases = PROTOCOLS[protocol]

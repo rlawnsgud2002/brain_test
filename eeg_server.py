@@ -25,6 +25,7 @@ import argparse
 import random
 import time
 import os
+import sys
 from typing import Optional
 
 try:
@@ -62,9 +63,11 @@ except ImportError:
 
 try:
     import websockets
+    WEBSOCKETS_OK = True
 except ImportError:
+    WEBSOCKETS_OK = False
+    websockets = None  # allow module import (e.g. for unit tests)
     print("[ERROR] websockets not found. Install with: pip install websockets")
-    exit(1)
 
 
 # ── DEAP Channel Mapping ──────────────────────────────────────────────────────
@@ -1322,6 +1325,9 @@ def make_handler(source, dat_file, trial, speed,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
+    if not WEBSOCKETS_OK:
+        print("[FATAL] websockets package missing. Install with: pip install websockets")
+        sys.exit(1)
     parser = argparse.ArgumentParser(
         description='EEG WebSocket Server — Brain Concentration Visualization')
     parser.add_argument('--source', choices=['sim','deap','mental','emotiv','muse','tgam'],
