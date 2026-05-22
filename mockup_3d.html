@@ -1129,6 +1129,7 @@ function loadCSV(input) {
       // Per-column min/max normalization for all selected channels
       const colStats = colsToUse.map(col => {
         const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+        if(!vs.length) return { col, mn: 0, rng: 0 };
         let mn=vs[0], mx=vs[0]; for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}
         return { col, mn, rng: mx - mn }; // rng=0 when flat — handled below as 50
       });
@@ -1320,6 +1321,7 @@ function _parseCSVText(text, filename) {
       // Per-column min/max normalization (loop avoids spread stack-overflow on large CSVs)
       const colStats = chCands.map(col => {
         const vs = rows.map(r => parseFloat(r[col])).filter(v => !isNaN(v));
+        if(!vs.length) return { col, mn: 0, rng: 0 };
         let mn=vs[0], mx=vs[0]; for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}
         return { col, mn, rng: mx - mn }; // rng=0 when flat — handled below as 50
       });
@@ -2595,7 +2597,7 @@ function showReport(){
     // Signal info: duration + speed
     const chunkSzInfo = Math.max(1, Math.round(CFG.csvHz / 10 * (CFG.csvSpeed||1)));
     const totalFrames = Math.ceil(CFG.csvData.length / chunkSzInfo);
-    const signalDurSec = CFG.csvData.length / CFG.csvHz;
+    const signalDurSec = CFG.csvData.length / Math.max(1, CFG.csvHz);
     const playbackSec = totalFrames * 0.1;
     document.getElementById('csvSignalInfo').textContent =
       `Signal: ${signalDurSec.toFixed(1)}s @ ${CFG.csvHz}Hz · Played at ${CFG.csvSpeed}× · Wall-clock: ${playbackSec.toFixed(1)}s`;
@@ -3739,7 +3741,9 @@ function runBatchCSV(input){
     const reader=new FileReader();
     reader.onerror=()=>{_batchResults.push({name:file.name,f1:null,reason:'read error'});nextFile();};
     reader.onload=ev=>{
-      Papa.parse(ev.target.result,{header:true,skipEmptyLines:true,complete:res=>{
+      Papa.parse(ev.target.result,{header:true,skipEmptyLines:true,
+        error:err=>{_batchResults.push({name:file.name,f1:null,reason:'parse error: '+err.message});nextFile();},
+        complete:res=>{
         const rows=res.data; if(!rows.length){_batchResults.push({name:file.name,f1:null,reason:'empty'});nextFile();return;}
         const hdrs=Object.keys(rows[0]);
         const hzH=hdrs.find(h=>/^(sampling_rate|hz|sample_rate|freq)$/i.test(h));
@@ -3754,7 +3758,7 @@ function runBatchCSV(input){
         else cols=nCols;
         const lblCol=hdrs.find(h=>/^label$/i.test(h));
         if(!lblCol){_batchResults.push({name:file.name,f1:null,reason:'no label col'});nextFile();return;}
-        const cStats=cols.map(col=>{const vs=rows.map(r=>parseFloat(r[col])).filter(v=>!isNaN(v));let mn=vs[0],mx=vs[0];for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}return{col,mn,rng:mx-mn};});
+        const cStats=cols.map(col=>{const vs=rows.map(r=>parseFloat(r[col])).filter(v=>!isNaN(v));if(!vs.length)return{col,mn:0,rng:0};let mn=vs[0],mx=vs[0];for(const v of vs){if(v<mn)mn=v;if(v>mx)mx=v;}return{col,mn,rng:mx-mn};});
         const data=rows.map(r=>{const nv=cStats.map(({col,mn,rng})=>{const v=parseFloat(r[col]);return isNaN(v)?50:(rng>0?((v-mn)/rng)*100:50);});return{val:nv.reduce((a,b)=>a+b,0)/nv.length,label:(r[lblCol]||'').trim().toLowerCase()};}).filter(d=>!isNaN(d.val));
         const cs=Math.max(1,Math.round(hz/10*(CFG.csvSpeed||1)));
         const trans=[];

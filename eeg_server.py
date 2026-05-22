@@ -1138,13 +1138,29 @@ def _make_recv(ws, calibrator_holder, exp_holder):
 
                     if msg_type == 'settings':
                         new_s = d.get('settings', {})
-                        if new_s.get('thLow', STATE['settings']['thLow']) >= \
-                           new_s.get('thHigh', STATE['settings']['thHigh']):
-                            await ws.send(json.dumps({'type': 'error',
-                                'message': 'Invalid settings: thLow must be < thHigh'}))
-                        else:
-                            STATE['settings'].update(new_s)
-                            print(f"[WS] Settings updated: {STATE['settings']}")
+                        # Coerce numeric fields to float — reject non-numeric values
+                        _NUM = ('thLow', 'thHigh', 'dt', 'slope')
+                        valid = True
+                        coerced = {}
+                        for k, v in new_s.items():
+                            if k in _NUM:
+                                try:
+                                    coerced[k] = float(v)
+                                except (TypeError, ValueError):
+                                    await ws.send(json.dumps({'type': 'error',
+                                        'message': f'Invalid settings: {k} must be a number'}))
+                                    valid = False; break
+                            else:
+                                coerced[k] = v
+                        if valid:
+                            tl = coerced.get('thLow',  STATE['settings']['thLow'])
+                            th = coerced.get('thHigh', STATE['settings']['thHigh'])
+                            if tl >= th:
+                                await ws.send(json.dumps({'type': 'error',
+                                    'message': 'Invalid settings: thLow must be < thHigh'}))
+                            else:
+                                STATE['settings'].update(coerced)
+                                print(f"[WS] Settings updated: {STATE['settings']}")
 
                     elif msg_type == 'calibrate_start':
                         if CAL_OK:
@@ -1174,12 +1190,17 @@ def _make_recv(ws, calibrator_holder, exp_holder):
                     elif msg_type == 'exp_start':
                         if EXP_OK:
                             protocol = d.get('protocol', 'short')
-                            runner = ExperimentRunner(protocol=protocol)
-                            exp_holder[0] = runner
-                            status = runner.start()
-                            await ws.send(json.dumps({'type': 'experiment', **status}))
-                            print(f"[EXP] Started protocol='{protocol}' "
-                                  f"({runner.total_duration()}s)")
+                            if protocol not in PROTOCOLS:
+                                await ws.send(json.dumps({'type': 'error',
+                                    'message': f"Unknown protocol '{protocol}'. Valid: {list(PROTOCOLS.keys())}"}))
+                                protocol = None
+                            if protocol:
+                                runner = ExperimentRunner(protocol=protocol)
+                                exp_holder[0] = runner
+                                status = runner.start()
+                                await ws.send(json.dumps({'type': 'experiment', **status}))
+                                print(f"[EXP] Started protocol='{protocol}' "
+                                      f"({runner.total_duration()}s)")
                         else:
                             await ws.send(json.dumps(
                                 {'type': 'error', 'message': 'experiment module not found'}))
