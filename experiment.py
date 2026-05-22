@@ -175,31 +175,40 @@ class ExperimentRunner:
         return time.time() - self._exp_start
 
     def save(self, path='results/experiment.json') -> str:
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        data = {
-            'protocol':   self.protocol_name,
-            'start_time': time.strftime('%Y-%m-%dT%H:%M:%S',
-                                        time.localtime(self._exp_start or time.time())),
-            'duration':   round(self.elapsed(), 1),
-            'phases':     [asdict(p) for p in self.phases],
-            'markers':    [asdict(m) for m in self.markers],
-            'summary':    self._summary(),
-        }
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"[EXP] Saved → {path}")
-        return path
+        try:
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            data = {
+                'protocol':   self.protocol_name,
+                'start_time': time.strftime('%Y-%m-%dT%H:%M:%S',
+                                            time.localtime(self._exp_start or time.time())),
+                'duration':   round(self.elapsed(), 1),
+                'phases':     [asdict(p) for p in self.phases],
+                'markers':    [asdict(m) for m in self.markers],
+                'summary':    self._summary(),
+            }
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            print(f"[EXP] Saved → {path}")
+            return path
+        except OSError as e:
+            print(f"[EXP] Save failed ({path}): {e}")
+            return ''
 
     def export_csv(self, path='results/experiment.csv') -> str:
-        os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
-        rows = ['elapsed_s,marker_type,phase,phase_type,label,concentration']
-        for m in self.markers:
-            rows.append(f"{m.elapsed:.2f},{m.marker_type},{m.phase},"
-                        f"{m.phase_type},{m.label},{m.concentration:.1f}")
-        with open(path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(rows))
-        print(f"[EXP] CSV → {path}")
-        return path
+        try:
+            os.makedirs(os.path.dirname(path) or '.', exist_ok=True)
+            rows = ['elapsed_s,marker_type,phase,phase_type,label,concentration']
+            for m in self.markers:
+                label = str(m.label or '').replace(',', ';')  # guard commas in label
+                rows.append(f"{m.elapsed:.2f},{m.marker_type},{m.phase},"
+                            f"{m.phase_type},{label},{m.concentration:.1f}")
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(rows))
+            print(f"[EXP] CSV → {path}")
+            return path
+        except OSError as e:
+            print(f"[EXP] CSV export failed ({path}): {e}")
+            return ''
 
     # ── Internal ──────────────────────────────────────────────────────────────
 

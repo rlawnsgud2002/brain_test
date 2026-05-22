@@ -151,6 +151,10 @@ class Calibrator:
         rb, fb = self._relax_buf, self._focus_buf
         n_relax = len(rb)
         n_focus = len(fb)
+        if n_relax == 0 or n_focus == 0:
+            print(f"[CAL] Warning: degenerate calibration — "
+                  f"relax={n_relax} frames, focus={n_focus} frames. "
+                  f"Thresholds will be clamped to defaults.")
 
         # Concentration scalars
         relax_conc = [b.get('concentration', 50) for b in rb]

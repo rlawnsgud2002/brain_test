@@ -57,10 +57,12 @@ class VPatternRuleBased:
         n = len(s)
         cur = s[-1]
 
-        # Look for a trough in the last DROP_WIN frames
+        # Look for a trough in the last DROP_WIN frames.
+        # Use the LAST (most recent) occurrence of the minimum so that
+        # at_bottom correctly reflects a fresh trough, not a historical tie.
         window = s[max(0, n - self.DROP_WIN):]
         trough_val  = min(window)
-        trough_idx  = window.index(trough_val)
+        trough_idx  = len(window) - 1 - window[::-1].index(trough_val)
         pre_peak    = max(window[:trough_idx + 1]) if trough_idx > 0 else window[0]
         post_window = window[trough_idx:]
         post_peak   = max(post_window)
@@ -232,8 +234,18 @@ if TORCH_OK:
             if not self._model_loaded:
                 return {**rb, 'rule_based': True}
 
+            # Validate eeg_window before feeding to model
+            if eeg_window is None:
+                return {**rb, 'rule_based': True}
+            try:
+                arr = np.asarray(eeg_window, dtype=np.float32)
+            except (TypeError, ValueError):
+                return {**rb, 'rule_based': True}
+            if arr.ndim != 2 or arr.shape[0] != self.n_ch:
+                return {**rb, 'rule_based': True}
+
             # Accumulate ring buffer; each entry shape (1, n_ch, n_time)
-            t = torch.tensor(eeg_window, dtype=torch.float32, device=self.device).unsqueeze(0)
+            t = torch.tensor(arr, dtype=torch.float32, device=self.device).unsqueeze(0)
             self._ring.append(t)
             if len(self._ring) > self.seq_len:
                 self._ring.pop(0)

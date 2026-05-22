@@ -255,3 +255,19 @@ class TestSummary:
         _drive(cal)
         s = cal.summary()
         assert 'Low=' in s and 'High=' in s
+
+
+# ── Degenerate buffer warning ────────────────────────────────────────────────
+class TestDegenerateBuffer:
+    def test_empty_relax_buf_produces_clamped_thresholds(self, tmp_path, capsys):
+        # If the relax buffer is empty, _compute should warn and still produce valid output
+        cal = Calibrator(save_path=str(tmp_path / 'cal.json'))
+        cal._relax_buf = []
+        cal._focus_buf = [{'concentration': 70, 'delta': 30, 'theta': 40,
+                           'alpha': 50, 'beta': 45, 'gamma': 20}]
+        result = cal._compute()
+        captured = capsys.readouterr()
+        assert 'Warning' in captured.out or 'degenerate' in captured.out.lower()
+        t = result['thresholds']
+        assert 10.0 <= t['th_low'] <= 45.0
+        assert 55.0 <= t['th_high'] <= 90.0

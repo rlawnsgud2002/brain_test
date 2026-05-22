@@ -3225,8 +3225,11 @@ function findBestThresholds() {
   const thHighs = [50,55,60,65,70,75,80,85,90];
   const dtCands = [0.5,1,1.5,2,2.5,3,4,5];
 
-  let best = {f1:-1, thLow:CFG.thLow, thHigh:CFG.thHigh, dt:CFG.dt, prec:0, rec:0, tp:0, fp:0, fn:0};
   const matchDt = parseFloat(document.getElementById('dtTolerance')?.value)||1.0;
+
+  // Defer the computation by one frame so the browser paints "SEARCHING…" before freezing
+  setTimeout(() => {
+  let best = {f1:-1, thLow:CFG.thLow, thHigh:CFG.thHigh, dt:CFG.dt, prec:0, rec:0, tp:0, fp:0, fn:0};
 
   for(const dt of dtCands) {
     for(const tl of thLows) {
@@ -3288,6 +3291,7 @@ function findBestThresholds() {
   },0);
 
   if(btn){btn.disabled=false;btn.textContent='⚡ FIND BEST THRESHOLDS';}
+  }, 50); // end deferred search
 }
 
 // ══════════════════════════════════════════════════════════

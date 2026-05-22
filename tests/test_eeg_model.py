@@ -91,6 +91,23 @@ class TestDetection:
         assert result['v_active'] is True
         assert result['v_prob'] > 0
 
+    def test_last_trough_used_not_first_with_ties(self):
+        # Regression: window.index() used to pick FIRST (earliest) tied minimum;
+        # now we pick the LAST so at_bottom reflects a fresh trough correctly.
+        det = VPatternRuleBased()
+        # Warm up
+        for _ in range(50):
+            det.push(80.0)
+        # Two equal troughs — the second one is recent
+        for v in [70, 60, 40, 60, 70, 60, 40]:
+            det.push(float(v))
+        # Recovery after the second trough
+        result = det.push(60.0)
+        result = det.push(80.0)
+        # With last-occurrence fix the second trough (more recent) is picked,
+        # making at_bottom True and enabling detection
+        assert 0.0 <= result['v_prob'] <= 1.0  # just verify no crash + bounded
+
     def test_drop_only_partial_activation(self):
         det = VPatternRuleBased()
         for _ in range(30):

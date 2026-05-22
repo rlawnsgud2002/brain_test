@@ -242,6 +242,32 @@ class TestPersistence:
         assert len(lines) >= 2
         assert lines[0].startswith('elapsed_s,marker_type')
 
+    def test_save_oserror_returns_empty_string(self, tmp_path):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        # Write to an invalid path (directory that can't be created)
+        result = runner.save('/proc/nonexistent/deep/exp.json')
+        assert result == ''
+
+    def test_export_csv_oserror_returns_empty_string(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        result = runner.export_csv('/proc/nonexistent/deep/exp.csv')
+        assert result == ''
+
+    def test_export_csv_comma_in_label_escaped(self, tmp_path):
+        # Commas in label would break CSV column count — should be replaced with ;
+        path = tmp_path / 'exp.csv'
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        runner.add_marker('label, with, commas', _bands())
+        runner.export_csv(str(path))
+        text = path.read_text()
+        # No data line should have more columns than the header
+        header_cols = len(text.split('\n')[0].split(','))
+        for line in text.strip().split('\n')[1:]:
+            assert len(line.split(',')) == header_cols
+
 
 # ── Phase sentinel ───────────────────────────────────────────────────────────
 class TestPhaseSentinel:

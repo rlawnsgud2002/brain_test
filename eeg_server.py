@@ -427,12 +427,15 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
     interval = (step / FS) / speed
 
     print(f"[DEAP] Labels: valence={labels[0]:.1f} arousal={labels[1]:.1f}")
-    await ws.send(json.dumps({
-        'type': 'meta', 'trial': trial,
-        'labels': {'valence': float(labels[0]), 'arousal': float(labels[1]),
-                   'dominance': float(labels[2]), 'liking': float(labels[3])},
-        'duration': n / FS
-    }))
+    try:
+        await ws.send(json.dumps({
+            'type': 'meta', 'trial': trial,
+            'labels': {'valence': float(labels[0]), 'arousal': float(labels[1]),
+                       'dominance': float(labels[2]), 'liking': float(labels[3])},
+            'duration': n / FS
+        }))
+    except websockets.exceptions.ConnectionClosed:
+        return
 
     for start in range(0, n - win, step):
         seg   = emotiv[:, start:start+win]
