@@ -237,6 +237,34 @@ class TestSaveLoad:
         result = Calibrator.load(path=str(path))
         assert result is None
 
+    def test_load_empty_dict_returns_none(self, tmp_path):
+        # Valid JSON but wrong schema — must reject, not raise KeyError later
+        path = tmp_path / 'empty.json'
+        path.write_text('{}')
+        result = Calibrator.load(path=str(path))
+        assert result is None
+
+    def test_load_array_returns_none(self, tmp_path):
+        # Root must be a dict, not an array
+        path = tmp_path / 'arr.json'
+        path.write_text('[1, 2, 3]')
+        result = Calibrator.load(path=str(path))
+        assert result is None
+
+    def test_load_missing_thresholds_keys_returns_none(self, tmp_path):
+        # 'thresholds' exists but missing required sub-keys (th_low/th_high/slope)
+        path = tmp_path / 'partial.json'
+        path.write_text('{"thresholds": {"th_low": 30}}')
+        result = Calibrator.load(path=str(path))
+        assert result is None
+
+    def test_save_is_atomic(self, tmp_path):
+        # After _save() succeeds, no .tmp file should be left behind
+        cal = Calibrator(save_path=str(tmp_path / 'cal.json'))
+        _drive(cal)
+        assert (tmp_path / 'cal.json').exists()
+        assert not (tmp_path / 'cal.json.tmp').exists()
+
     def test_save_creates_parent_directory(self, tmp_path):
         nested = tmp_path / 'sub' / 'dir' / 'cal.json'
         cal = Calibrator(save_path=str(nested))

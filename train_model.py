@@ -93,6 +93,8 @@ def load_deap(dat_file, trials=None, notch_hz=50):
     labels           : (n_windows,)
     """
     print(f"[DATA] Loading DEAP: {dat_file}")
+    if not os.path.exists(dat_file):
+        sys.exit(f"[ERROR] DEAP file not found: {dat_file}")
     with open(dat_file, 'rb') as f:
         data = pickle.load(f, encoding='latin1')
 
@@ -127,6 +129,9 @@ def load_deap(dat_file, trials=None, notch_hz=50):
         n_pos = int(labels.sum())
         print(f"  Trial {t:02d}: {len(labels)} windows, {n_pos} V-pattern ({n_pos/len(labels)*100:.1f}%)")
 
+    if not all_X:
+        sys.exit("[ERROR] No usable windows extracted from any DEAP trial. "
+                 "Check trial range and that signals are at least 1s long.")
     return np.concatenate(all_X), np.concatenate(all_y)
 
 
@@ -142,6 +147,8 @@ def load_mental(csv_file):
         sys.exit("[ERROR] pandas required for mental source: pip install pandas")
 
     print(f"[DATA] Loading Mental State CSV: {csv_file}")
+    if not os.path.exists(csv_file):
+        sys.exit(f"[ERROR] Mental State CSV not found: {csv_file}")
     df = pd.read_csv(csv_file)
     df.columns = [c.strip().lower() for c in df.columns]
 
@@ -159,9 +166,18 @@ def load_mental(csv_file):
     if not all([col_alpha, col_beta]):
         sys.exit(f"[ERROR] Cannot find alpha/beta columns. Found: {list(df.columns)}")
 
-    # Compute concentration per row
+    # Compute concentration per row — drop rows where alpha/beta are NaN
     alphas = df[col_alpha].values.astype(float)
     betas  = df[col_beta].values.astype(float)
+    valid_mask = np.isfinite(alphas) & np.isfinite(betas)
+    n_dropped = int((~valid_mask).sum())
+    if n_dropped:
+        print(f"[DATA] Dropping {n_dropped} rows with NaN/Inf in alpha/beta")
+    alphas = alphas[valid_mask]
+    betas  = betas[valid_mask]
+    df     = df.iloc[valid_mask].reset_index(drop=True)
+    if len(alphas) < WIN_SAMPLES:
+        sys.exit(f"[ERROR] Only {len(alphas)} valid rows after NaN drop — need at least {WIN_SAMPLES}")
     concs  = np.clip((betas / (alphas + 1e-9) - 0.3) * 40 + 50, 0, 100)
     labels = label_vpattern(concs)
 
@@ -219,13 +235,22 @@ def train(X, y, output_path, epochs=EPOCHS, lr=LR, batch=BATCH, device=DEVICE):
           f"{int(y.sum())} positive ({y.mean()*100:.1f}%)")
 
     dataset = VPatternDataset(X, y)
+    if len(dataset) < batch * 2:
+        sys.exit(f"[ERROR] Dataset too small ({len(dataset)} sequences) — need at least {batch*2}. "
+                 f"Reduce --batch or provide more data.")
     n_val   = max(1, int(len(dataset) * 0.15))
     n_train = len(dataset) - n_val
     train_ds, val_ds = random_split(dataset, [n_train, n_val],
                                     generator=torch.Generator().manual_seed(42))
 
     # Class-weighted loss to handle imbalance
-    pos_weight = torch.tensor([(1 - y.mean()) / (y.mean() + 1e-6)]).to(device)
+    y_mean = float(y.mean())
+    if y_mean == 0.0:
+        sys.exit("[ERROR] No positive samples in dataset — V-pattern labels are all zero. "
+                 "Adjust DROP_TH / RISE_TH or use a different source.")
+    if y_mean == 1.0:
+        sys.exit("[ERROR] All samples positive — dataset is degenerate.")
+    pos_weight = torch.tensor([(1 - y_mean) / (y_mean + 1e-6)]).to(device)
     criterion  = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
     train_dl = DataLoader(train_ds, batch_size=batch, shuffle=True,  num_workers=0)
@@ -233,8 +258,10 @@ def train(X, y, output_path, epochs=EPOCHS, lr=LR, batch=BATCH, device=DEVICE):
 
     model = EEGNetLSTM(n_ch=14, n_time=WIN_SAMPLES, seq_len=SEQ_LEN).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=1e-4)
+    # Note: `verbose=True` was deprecated in PyTorch 2.1 — use get_last_lr() for logging instead
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, 'min', patience=5, factor=0.5, verbose=True)
+        optimizer, 'min', patience=5, factor=0.5)
+    last_lr = lr
 
     best_val_loss = float('inf')
     best_state    = None
@@ -277,6 +304,10 @@ def train(X, y, output_path, epochs=EPOCHS, lr=LR, batch=BATCH, device=DEVICE):
         f1   = 2 * prec * rec / (prec + rec + 1e-9)
 
         scheduler.step(val_loss)
+        cur_lr = optimizer.param_groups[0]['lr']
+        if cur_lr != last_lr:
+            print(f"  [LR] reduced {last_lr:.2e} → {cur_lr:.2e}")
+            last_lr = cur_lr
 
         if epoch % 5 == 0 or epoch == 1:
             print(f"  Epoch {epoch:03d} | train={train_loss:.4f} val={val_loss:.4f} "
@@ -314,7 +345,13 @@ def main():
 
     trials = None
     if args.trials:
-        trials = [int(t) for t in args.trials.split(',')]
+        try:
+            trials = [int(t.strip()) for t in args.trials.split(',') if t.strip()]
+        except ValueError as e:
+            sys.exit(f"[ERROR] Invalid --trials value '{args.trials}'. "
+                     f"Expected comma-separated integers (e.g. 0,1,2): {e}")
+        if any(t < 0 for t in trials):
+            sys.exit(f"[ERROR] --trials values must be >= 0 (got {trials})")
 
     if args.source == 'deap':
         X, y = load_deap(args.file, trials=trials, notch_hz=args.notch)

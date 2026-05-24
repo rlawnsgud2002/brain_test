@@ -155,6 +155,16 @@ class TestMarkers:
         assert len(t_markers) == 1
         assert t_markers[0].concentration == 72.5
 
+    def test_explicit_zero_concentration_not_overridden(self):
+        # Regression: `conc = concentration or bands.get(...)` treated 0.0 as falsy
+        # and silently substituted bands lookup. Explicit 0.0 must be preserved.
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        # Pass bands with conc=80 but force explicit concentration=0 via threshold_marker
+        runner.threshold_marker('falling', 0.0)
+        t_markers = [m for m in runner.markers if m.marker_type == 'threshold']
+        assert t_markers[-1].concentration == 0.0
+
     def test_marker_only_includes_known_band_keys(self):
         # Garbage keys must NOT leak into stored marker bands
         runner = ExperimentRunner(protocol='quick')

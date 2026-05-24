@@ -168,30 +168,47 @@ async def handle_client(websocket):
 
     try:
         async def send_loop():
-            while True:
-                vals, bands = source.step()
-                avg = sum(vals[:4 if device=='muse' else 14]) / (4 if device=='muse' else 14)
-                v_active = detector.step(avg, CFG['thLow'], CFG['thHigh'], CFG['dt'])
+            try:
+                while True:
+                    vals, bands = source.step()
+                    avg = sum(vals[:4 if device=='muse' else 14]) / (4 if device=='muse' else 14)
+                    v_active = detector.step(avg, CFG['thLow'], CFG['thHigh'], CFG['dt'])
 
-                msg = {
-                    'type': 'eeg_data',
-                    'channels': vals,
-                    'bands': bands,
-                    'vpattern': {'v_active': v_active, 'v_low': detector.v_low},
-                    'session_time': round(time.time() - session_start, 2),
-                }
-                await websocket.send(json.dumps(msg))
-                await asyncio.sleep(0.1)  # 10Hz update
+                    msg = {
+                        'type': 'eeg_data',
+                        'channels': vals,
+                        'bands': bands,
+                        'vpattern': {'v_active': v_active, 'v_low': detector.v_low},
+                        'session_time': round(time.time() - session_start, 2),
+                    }
+                    await websocket.send(json.dumps(msg))
+                    await asyncio.sleep(0.1)  # 10Hz update
+            except websockets.exceptions.ConnectionClosed:
+                pass
 
         async def recv_loop():
             async for msg in websocket:
                 try:
                     d = json.loads(msg)
+                    if not isinstance(d, dict):
+                        continue
                     if d.get('type') == 'settings':
-                        s = d.get('settings', {})
-                        if 'thLow'  in s: CFG['thLow']  = s['thLow']
-                        if 'thHigh' in s: CFG['thHigh'] = s['thHigh']
-                        if 'dt'     in s: CFG['dt']     = s['dt']
+                        s = d.get('settings', {}) or {}
+                        # Validate and coerce numeric fields; reject non-numeric without mutating CFG
+                        coerced = {}
+                        for k in ('thLow', 'thHigh', 'dt'):
+                            if k in s:
+                                try: coerced[k] = float(s[k])
+                                except (TypeError, ValueError):
+                                    log.warning(f"Settings rejected: {k}={s[k]!r} not numeric")
+                                    coerced = None; break
+                        if coerced is None: continue
+                        tl = coerced.get('thLow',  CFG['thLow'])
+                        th = coerced.get('thHigh', CFG['thHigh'])
+                        if tl >= th:
+                            log.warning(f"Settings rejected: thLow ({tl}) >= thHigh ({th})")
+                            continue
+                        CFG.update(coerced)
                         log.info(f"Settings updated: {CFG}")
                     elif d.get('type') == 'source_change':
                         log.info(f"Source change requested: {d.get('source')}")

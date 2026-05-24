@@ -214,19 +214,35 @@ class Calibrator:
         return result
 
     def _save(self):
+        # Atomic write: tmp file + os.replace() so we never leave a half-written file
+        # that would fail json.load() on next startup.
         try:
             parent = os.path.dirname(self.save_path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(self.save_path, 'w') as f:
+            tmp_path = self.save_path + '.tmp'
+            with open(tmp_path, 'w') as f:
                 json.dump(self._result, f, indent=2, ensure_ascii=False)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass  # fsync not supported on all filesystems
+            os.replace(tmp_path, self.save_path)
             print(f"[CAL] Saved → {self.save_path}")
         except OSError as e:
             print(f"[CAL] Save failed: {e}")
+            # Clean up partial tmp file if it exists
+            try: os.remove(self.save_path + '.tmp')
+            except OSError: pass
 
     @classmethod
     def load(cls, path=SAVE_PATH):
-        """Load previously saved calibration and return a done Calibrator."""
+        """Load previously saved calibration and return a done Calibrator.
+
+        Returns None on missing file, parse error, OR if the JSON doesn't match
+        the expected schema (avoids KeyError downstream in to_settings/thresholds).
+        """
         cal = cls(save_path=path)
         if not os.path.exists(path):
             return None
@@ -235,6 +251,14 @@ class Calibrator:
                 data = json.load(f)
         except (OSError, json.JSONDecodeError) as e:
             print(f"[CAL] Load failed ({path}): {e}")
+            return None
+        # Schema validation: must be a dict with 'thresholds' containing th_low/th_high/slope
+        if not isinstance(data, dict):
+            print(f"[CAL] Load failed ({path}): root must be JSON object")
+            return None
+        t = data.get('thresholds')
+        if not isinstance(t, dict) or not all(k in t for k in ('th_low', 'th_high', 'slope')):
+            print(f"[CAL] Load failed ({path}): missing/invalid 'thresholds' section")
             return None
         cal._result = data
         cal._state  = 'done'

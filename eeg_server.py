@@ -220,8 +220,24 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=
               If provided, concentration is baseline-relative.
     """
     artifacts = {'blinks': 0, 'rejected_ratio': 0.0}
+    # Guard against empty / wrong-shape input — return safe defaults instead of crashing
+    if NUMPY_OK:
+        if not hasattr(eeg_14ch, 'shape') or eeg_14ch.ndim != 2 or eeg_14ch.shape[0] == 0:
+            return {
+                'type': 'eeg',
+                'channels': [50.0] * 14,
+                'contact_quality': [0.5] * 14,
+                'artifacts': {**artifacts, 'emg_warn': False, 'invalid_input': True},
+                'bands': {'delta':0,'theta':0,'alpha':0,'beta':0,'gamma':0,
+                          'concentration':50.0,'engagement_index':0.0,'faa':0.0}
+            }
+        # Replace NaN/inf with column means so filters don't propagate garbage
+        if not np.all(np.isfinite(eeg_14ch)):
+            eeg_14ch = np.nan_to_num(eeg_14ch, nan=0.0, posinf=0.0, neginf=0.0)
+            artifacts['nan_replaced'] = True
     if apply_preprocess and NUMPY_OK:
-        eeg_14ch, artifacts = preprocess(eeg_14ch, fs=fs, notch_hz=notch_hz)
+        eeg_14ch, artifacts2 = preprocess(eeg_14ch, fs=fs, notch_hz=notch_hz)
+        artifacts.update(artifacts2)
 
     ratios, ch_bands = [], []
     for ch in eeg_14ch:
@@ -393,8 +409,11 @@ def _add_vpattern(frame, detector, eeg_seg=None):
         # Rule-based scalar detector (VPatternRuleBased)
         result = detector.push(conc)
     elif eeg_seg is not None and hasattr(detector, '_ring'):
-        # ML detector with EEG segment available
-        result = detector.push(eeg_seg, conc)
+        # ML detector: validate shape before pushing (channel count mismatch crashes torch.tensor)
+        if hasattr(eeg_seg, 'shape') and eeg_seg.ndim == 2 and eeg_seg.shape[0] == 14:
+            result = detector.push(eeg_seg, conc)
+        else:
+            result = {'v_prob': 0.0, 'v_active': False, 'shape_mismatch': True}
     else:
         # ML detector called without EEG segment (stream_sim/stream_mental) — return inactive
         result = {'v_prob': 0.0, 'v_active': False, 'rule_based': False}
@@ -1188,7 +1207,12 @@ def _make_recv(ws, calibrator_holder, exp_holder):
                                 print(f"[WS] Settings updated: {STATE['settings']}")
 
                     elif msg_type == 'calibrate_start':
-                        if CAL_OK:
+                        # Refuse if an experiment is in progress — both compete for the EEG stream
+                        # and silently mixing them produces invalid calibration baselines
+                        if exp_holder[0] is not None and not exp_holder[0].done:
+                            await ws.send(json.dumps({'type': 'error',
+                                'message': 'Cannot start calibration while an experiment is running. Stop the experiment first.'}))
+                        elif CAL_OK:
                             cal = Calibrator()
                             calibrator_holder[0] = cal
                             status = cal.start()
@@ -1213,6 +1237,11 @@ def _make_recv(ws, calibrator_holder, exp_holder):
                                     {'type': 'calibration', 'state': 'not_found'}))
 
                     elif msg_type == 'exp_start':
+                        # Refuse if calibration is in progress
+                        if calibrator_holder[0] is not None and not calibrator_holder[0].done:
+                            await ws.send(json.dumps({'type': 'error',
+                                'message': 'Cannot start experiment while calibration is running. Finish calibration first.'}))
+                            continue
                         if EXP_OK:
                             protocol = d.get('protocol', 'short')
                             if protocol not in PROTOCOLS:
@@ -1331,11 +1360,25 @@ def make_handler(source, dat_file, trial, speed,
                 await stream_tgam(ws, serial_port=STATE.get('serial_port'),
                                   detector=detector, cal_holder=calibrator_holder,
                                   exp_holder=exp_holder)
-            else:
+            elif source == 'sim':
                 await stream_sim(ws, detector=detector, cal_holder=calibrator_holder,
                                  exp_holder=exp_holder)
+            else:
+                # Reject unknown sources explicitly instead of silently falling back to sim —
+                # avoids user confusion ("why am I getting fake data?")
+                try:
+                    await ws.send(json.dumps({'type': 'error',
+                        'message': f"Unknown source '{source}'. Valid: sim, deap, mental, emotiv, muse, tgam"}))
+                except websockets.exceptions.ConnectionClosed:
+                    pass
         except Exception as e:
-            print(f"[WS] Error: {e}")
+            print(f"[WS] Stream error ({source}): {e}")
+            # Inform the client so it can show a real error rather than appearing stuck
+            try:
+                await ws.send(json.dumps({'type': 'error',
+                    'message': f"Stream failed: {e}"}))
+            except websockets.exceptions.ConnectionClosed:
+                pass
         finally:
             recv_task.cancel()
             try:
@@ -1427,8 +1470,21 @@ def main():
     print("=" * 60)
 
     async def serve():
+        # Wire up SIGTERM (Docker/systemd) and SIGINT (Ctrl+C) for graceful shutdown.
+        # Without this, SIGTERM kills the process abruptly, leaving WebSocket
+        # clients hanging without a clean close frame.
+        import signal
+        stop = asyncio.get_event_loop().create_future()
+        def _on_signal():
+            if not stop.done(): stop.set_result(None)
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                asyncio.get_event_loop().add_signal_handler(sig, _on_signal)
+            except (NotImplementedError, RuntimeError):
+                pass  # Windows / non-main thread: signals not supported
         async with websockets.serve(handler, 'localhost', args.port):
-            await asyncio.Future()
+            await stop  # blocks until SIGINT/SIGTERM
+        print("\n[WS] Server stopped gracefully")
 
     try:
         asyncio.run(serve())

@@ -856,7 +856,9 @@ function _currentCsvLabel(){
 // ══════════════════════════════════════════════════════════
 //  WEBSOCKET
 // ══════════════════════════════════════════════════════════
-let ws = null, wsReTimer = null;
+let ws = null, wsReTimer = null, _wsRetryDelay = 1000, _wsRetryCount = 0;
+const _WS_MAX_RETRIES = 10;     // give up after ~10 attempts (~5 min with backoff)
+const _WS_MAX_DELAY   = 60000;  // cap each retry at 60s
 let _cqLive = false;          // true while real Emotiv device stream is active
 let _emotivBattery = null;    // battery % received from Cortex (null = unknown)
 
@@ -875,6 +877,7 @@ function wsConnect() {
   ws.onopen  = () => {
     wsSetStatus('connected');
     showToast('WebSocket connected','#60dd90');
+    _wsRetryDelay = 1000; _wsRetryCount = 0;  // reset backoff on success
     const src=document.getElementById('srcSel')?.value;
     if(src&&src!=='sim') ws.send(JSON.stringify({type:'source_change',source:src}));
   };
@@ -883,8 +886,20 @@ function wsConnect() {
     wsSetStatus('error'); CFG.dataSource='sim';
     _cqLive=false; _emotivBattery=null;
     if(EXP.active)_expDone();
-    if(wasWs)showToast('WebSocket disconnected — reconnecting…','#ff8040');
-    clearTimeout(wsReTimer); wsReTimer=setTimeout(wsConnect,3000);
+    // Clean up calibration too — server stops calibrating when WS closes, UI must follow
+    if(CAL.active){
+      CAL.active=false;
+      const cm=document.getElementById('calModal'); if(cm) cm.classList.remove('show');
+    }
+    clearTimeout(wsReTimer);
+    if(_wsRetryCount >= _WS_MAX_RETRIES){
+      if(wasWs) showToast('WebSocket lost — max retries reached. Refresh to retry.','#ff8040');
+      return;
+    }
+    _wsRetryCount += 1;
+    if(wasWs) showToast(`WebSocket disconnected — retrying in ${Math.round(_wsRetryDelay/1000)}s…`,'#ff8040');
+    wsReTimer = setTimeout(wsConnect, _wsRetryDelay);
+    _wsRetryDelay = Math.min(_WS_MAX_DELAY, _wsRetryDelay * 2);  // exponential backoff
   };
   ws.onerror = () => wsSetStatus('error');
   ws.onmessage = e => {
@@ -940,7 +955,10 @@ function wsConnect() {
         } else if (d.type==='battery') {
           _emotivBattery = typeof d.pct === 'number' ? d.pct : null;
         }
-    } catch(_) {}
+    } catch(err) {
+      // Don't swallow silently — log so developers can debug. UX still survives.
+      console.error('[WS onmessage] handler error:', err, 'raw:', e.data?.slice?.(0,200));
+    }
   };
 }
 
@@ -2460,6 +2478,8 @@ function drawTopo(cv) {
 let frame=0;
 function animate(){
   requestAnimationFrame(animate); frame=(frame+1)&0x7FFFFFFF;
+  // Skip per-frame work when tab is hidden — saves CPU/GPU in background
+  if(document.hidden) return;
   if(frame%6===0){
     const now=performance.now();
     if(CFG._lastStepTime>0) CFG._dt=Math.max(0.05,Math.min(1,(now-CFG._lastStepTime)/1000));
@@ -3818,7 +3838,11 @@ function _showBatchReport(){
   loadSettingsLS();
   // Save session name on change
   const sn=document.getElementById('sessionName');
-  if(sn) sn.addEventListener('input',saveSettingsLS);
+  // Debounce sessionName input — every keystroke fires; throttle to once per 500ms idle
+  if(sn){
+    let _snTimer=null;
+    sn.addEventListener('input',()=>{ clearTimeout(_snTimer); _snTimer=setTimeout(saveSettingsLS, 500); });
+  }
   // Save device selection on change
   const ds=document.getElementById('devSel');
   if(ds) ds.addEventListener('change',()=>setTimeout(saveSettingsLS,0));
