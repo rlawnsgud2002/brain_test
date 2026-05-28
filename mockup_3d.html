@@ -1203,8 +1203,7 @@ function loadCSV(input) {
       showToast(info, '#40cc90');
 
       input.value = ''; // allow re-selecting same file
-    },
-    error: function(err) { showToast('CSV parse error: ' + err.message, '#ff8040'); }
+    }
   });
 }
 
@@ -1383,8 +1382,7 @@ function _parseCSVText(text, filename) {
       document.getElementById('csvPct').textContent='0%';
       document.getElementById('topSrcLabel').textContent='CSV';
       showToast(info, '#40cc90');
-    },
-    error: function(err) { showToast('CSV parse error: ' + err.message, '#ff8040'); }
+    }
   });
 }
 
@@ -1684,6 +1682,7 @@ function simStep(){
         if(d.vals) for(let c=0;c<csvCols;c++) colSums[c]+=d.vals[c];
       }
       const chunkAvg = sum / count;
+      CFG._csvChunkAvg = chunkAvg; // true mean of all CSV channels — keep V-detection in sync with detectVPatternsPure regardless of nch/csvCols ratio
       if(csvCols > 1 && CFG.csvData[CFG.csvIdx]?.vals) {
         for(let ch=0;ch<nch;ch++) CFG.vals[ch]=colSums[ch%csvCols]/count;
       } else {
@@ -1820,7 +1819,9 @@ function simStep(){
     const eiDenom=Math.max(0.1,(bands.alpha||50)+(bands.theta||40));
     bands.engagement_index=Math.max(0,Math.min(2,(bands.beta||30)/eiDenom+((Math.random()-.5)*0.04)));
   }
-  const avg=Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
+  const avg=(CFG.dataSource==='csv'&&CFG._csvChunkAvg!=null)
+    ?CFG._csvChunkAvg
+    :Array.from(CFG.vals.slice(0,nch)).reduce((s,v)=>s+v,0)/nch;
   CFG.history.push(avg);
   if(CFG.history.length>120) CFG.history.shift();
   rptTick(avg);
