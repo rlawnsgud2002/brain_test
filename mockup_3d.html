@@ -2270,7 +2270,7 @@ function updateCQ(){
   }
 
   const items=elecs.slice(0,nch).map((e,i)=>{
-    const q=CFG.cqVals[i]||0.85;
+    const q=CFG.cqVals[i]??0.85;
     const kO=toKOhm(q);
     const col=cqColor(kO);
     const barW=Math.max(4,Math.min(100,q*100)).toFixed(0);
