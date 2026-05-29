@@ -181,12 +181,14 @@
 
     /* ── Experiment bar ── */
     #expBar { display:none; position:fixed; top:38px; left:0; right:0; z-index:200; pointer-events:none; }
-    #expBarInner { background:rgba(5,8,16,0.92); padding:5px 14px; display:flex; align-items:center; gap:10px; border-bottom:1px solid rgba(100,140,255,0.18); }
+    #expBarInner { background:rgba(5,8,16,0.92); padding:5px 14px; display:flex; align-items:center; gap:8px; border-bottom:1px solid rgba(100,140,255,0.18); }
     #expInstruction { background:rgba(5,8,16,0.78); padding:3px 14px; font-size:10px; color:#80a0d0; text-align:center; border-bottom:1px solid rgba(100,140,255,0.1); }
     #expBarStop { pointer-events:all; cursor:pointer; font-size:9px; color:#ff6666; padding:2px 6px; border:1px solid rgba(255,60,60,0.3); border-radius:3px; background:rgba(255,60,60,0.1); white-space:nowrap; }
     #expBarStop:hover { background:rgba(255,60,60,0.22); }
     #expBarMark { pointer-events:all; cursor:pointer; font-size:9px; color:#ffcc44; padding:2px 6px; border:1px solid rgba(255,200,50,0.3); border-radius:3px; background:rgba(255,200,50,0.08); }
     #expBarMark:hover { background:rgba(255,200,50,0.22); }
+    #expPhaseType { font-size:8px; letter-spacing:1px; padding:1px 5px; border-radius:2px; white-space:nowrap; transition:background .3s,color .3s; }
+    #expElapsed { font-size:9px; color:#3a5878; white-space:nowrap; min-width:52px; text-align:right; }
     /* ── Spectrogram ── */
     #spectroCanvas { display:block; width:100%; height:44px; border-radius:3px; background:rgba(5,8,20,0.6); }
 
@@ -485,11 +487,13 @@
 <!-- Experiment bar -->
 <div id="expBar">
   <div id="expBarInner">
-    <span id="expPhaseName" style="font-size:10px;letter-spacing:2px;color:#6480cc;min-width:80px">BASELINE</span>
+    <span id="expPhaseType" style="background:rgba(32,64,128,0.5);color:#80a0e0">BASELINE</span>
+    <span id="expPhaseName" style="font-size:10px;letter-spacing:2px;color:#6480cc;min-width:60px">PH 1</span>
     <div style="flex:1;height:3px;background:rgba(100,140,255,0.1);border-radius:2px;overflow:hidden">
       <div id="expProgressBar" style="height:100%;width:0%;border-radius:2px;transition:width 1s linear"></div>
     </div>
     <span id="expTimer" style="font-size:12px;color:#a0b8ff;min-width:36px;text-align:right">0s</span>
+    <span id="expElapsed">0s/0s</span>
     <span id="expPhaseCount" style="font-size:9px;color:#4060aa">1/4</span>
     <span id="expBarMark" onclick="addManualMarker()" title="Space">📍</span>
     <span id="expBarStop" onclick="stopExperiment()">■ STOP</span>
@@ -2906,7 +2910,7 @@ function _handleCalibration(d){
 // ══════════════════════════════════════════════════════════
 //  EXPERIMENT PROTOCOL
 // ══════════════════════════════════════════════════════════
-const EXP={active:false,markerCount:0,_timerInterval:null,_simPhaseIdx:0,_simProto:null};
+const EXP={active:false,markerCount:0,_timerInterval:null,_simPhaseIdx:0,_simProto:null,_expStartTime:0,_totalDur:0};
 
 function _expSetRunning(running){
   document.getElementById('btnExp').style.display    =running?'none':'inline-block';
@@ -2946,13 +2950,14 @@ const SIM_PROTOCOLS = {
 function startExperiment(){
   if(CFG.dataSource==='csv'||CFG.dataSource==='csv_done'){showToast('Cannot start experiment during CSV playback','#ff8040');return;}
   if(ws && ws.readyState===WebSocket.OPEN){
-    EXP.active=true; EXP.markerCount=0; _expSetRunning(true);
+    EXP.active=true; EXP.markerCount=0; EXP._expStartTime=Date.now(); _expSetRunning(true);
     ws.send(JSON.stringify({type:'exp_start',protocol:document.getElementById('expProtocolSel').value}));
     return;
   }
   // Simulation mode: run protocol locally
   const proto = SIM_PROTOCOLS[document.getElementById('expProtocolSel').value] || SIM_PROTOCOLS.quick;
   EXP.active=true; EXP.markerCount=0; EXP._simPhaseIdx=0; EXP._simProto=proto;
+  EXP._expStartTime=Date.now(); EXP._totalDur=proto.reduce((s,p)=>s+p.dur,0);
   _expSetRunning(true);
   _runSimExpPhase();
 }
@@ -2977,6 +2982,8 @@ function _runSimExpPhase(){
   let rem = phase.dur;
   EXP._timerInterval = setInterval(()=>{
     rem -= 0.25;
+    const elEl = document.getElementById('expElapsed');
+    if(elEl){ const elapsed=((Date.now()-EXP._expStartTime)/1000).toFixed(0); elEl.textContent=elapsed+'s/'+EXP._totalDur+'s'; }
     document.getElementById('expTimer').textContent = Math.ceil(rem)+'s';
     document.getElementById('expProgressBar').style.width =
       ((idx + 1 - rem/phase.dur) / proto.length * 100).toFixed(2)+'%';
@@ -3023,6 +3030,13 @@ document.addEventListener('keydown',e=>{
   }
 });
 function _expDone(){EXP.active=false;_expSetRunning(false);clearInterval(EXP._timerInterval);document.body.style.borderTop='';}
+// Phase type visual config: badge bg, badge text color, border color
+const _EXP_PT = {
+  baseline: {bg:'rgba(32,64,128,0.55)',  col:'#80a0e0', bdr:'#204080'},
+  relax:    {bg:'rgba(32,96,176,0.55)',  col:'#60c0ff', bdr:'#2060b0'},
+  task:     {bg:'rgba(176,64,32,0.55)',  col:'#ff9060', bdr:'#b04020'},
+  rest:     {bg:'rgba(32,64,96,0.55)',   col:'#70a0b0', bdr:'#204060'},
+};
 function _handleExperiment(d){
   if(d.state==='running'||d.phase){
     if(d.phase)document.getElementById('expPhaseName').textContent=d.phase;
@@ -3034,15 +3048,48 @@ function _handleExperiment(d){
     if(d.remaining!==undefined){
       clearInterval(EXP._timerInterval); let rem=d.remaining;
       document.getElementById('expTimer').textContent=Math.ceil(rem)+'s';
-      EXP._timerInterval=setInterval(()=>{rem-=.25;if(rem>0)document.getElementById('expTimer').textContent=Math.ceil(rem)+'s';else clearInterval(EXP._timerInterval);},250);
+      EXP._timerInterval=setInterval(()=>{
+        rem-=.25;
+        if(rem>0) document.getElementById('expTimer').textContent=Math.ceil(rem)+'s';
+        else clearInterval(EXP._timerInterval);
+        // WS mode: update elapsed from server fields if available, otherwise local clock
+        const elEl=document.getElementById('expElapsed');
+        if(elEl && EXP._totalDur>0){
+          const elapsed=((Date.now()-EXP._expStartTime)/1000).toFixed(0);
+          elEl.textContent=elapsed+'s/'+EXP._totalDur+'s';
+        }
+      },250);
     }
-    if(d.phase_idx!==undefined)document.getElementById('expPhaseCount').textContent=`${d.phase_idx+1}/${d.phase_total}`;
+    if(d.phase_idx!==undefined) document.getElementById('expPhaseCount').textContent=`${d.phase_idx+1}/${d.phase_total}`;
+    // Update phase type badge
+    if(d.phase_type){
+      const pt=document.getElementById('expPhaseType');
+      const pStyle=_EXP_PT[d.phase_type]||{bg:'rgba(100,140,255,0.3)',col:'#a0b8ff',bdr:'#3060ff'};
+      pt.textContent=(d.phase_type).toUpperCase();
+      pt.style.background=pStyle.bg; pt.style.color=pStyle.col;
+    }
+    // Update total duration for WS mode (server sends total_dur on each tick)
+    if(d.total_dur) EXP._totalDur=d.total_dur;
+    if(d.elapsed_exp!==undefined && EXP._totalDur>0){
+      document.getElementById('expElapsed').textContent=Math.floor(d.elapsed_exp)+'s/'+EXP._totalDur+'s';
+    }
     const tc={baseline:'#204080',relax:'#2060b0',task:'#b04020',rest:'#204060'};
     document.body.style.borderTop=`2px solid ${tc[d.phase_type]||'#3060ff'}`;
-    if(d.transition){document.getElementById('expBar').style.opacity='.5';setTimeout(()=>document.getElementById('expBar').style.opacity='1',400);}
+    if(d.transition){
+      const bar2=document.getElementById('expBar');
+      bar2.style.opacity='.45'; setTimeout(()=>bar2.style.opacity='1',350);
+    }
   } else if(d.state==='done'||d.state==='stopped'){
     _expDone();
-    if(d.summary){const s=d.summary;const topPhase=Object.entries(s.phase_stats||{}).sort(([,a],[,b])=>b.mean_concentration-a.mean_concentration)[0];showToast(`Experiment done · Markers:${s.n_markers} V:${s.n_vpattern}${topPhase?` · Peak:${topPhase[0]} ${topPhase[1].mean_concentration}%`:''}`, '#80ffb0');}
+    if(d.summary){
+      const s=d.summary;
+      const phases=Object.entries(s.phase_stats||{});
+      const taskStat=phases.find(([k])=>k==='task');
+      const relaxStat=phases.find(([k])=>k==='relax');
+      const taskStr=taskStat?` TASK≈${taskStat[1].mean_concentration}%`:'';
+      const relaxStr=relaxStat?` RELAX≈${relaxStat[1].mean_concentration}%`:'';
+      showToast(`Experiment done · ${s.n_markers} markers · ${s.n_vpattern} V-events${taskStr}${relaxStr}`,'#80ffb0');
+    }
   }
 }
 

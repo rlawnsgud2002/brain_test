@@ -295,6 +295,152 @@ class TestArgValidation:
         assert 'port' in self._validate(port=70000)
 
 
+# ── _SimState ─────────────────────────────────────────────────────────────────
+class TestSimState:
+    def test_step_returns_14_channels(self):
+        sim = eeg_server._SimState()
+        channels, bands = sim.step()
+        assert len(channels) == 14
+
+    def test_channels_in_range(self):
+        sim = eeg_server._SimState()
+        for _ in range(20):
+            channels, _ = sim.step()
+            for v in channels:
+                assert 5.0 <= v <= 95.0, f"channel out of range: {v}"
+
+    def test_bands_has_engagement_index(self):
+        sim = eeg_server._SimState()
+        _, bands = sim.step()
+        assert 'engagement_index' in bands
+
+    def test_bands_has_faa(self):
+        sim = eeg_server._SimState()
+        _, bands = sim.step()
+        assert 'faa' in bands
+        assert -0.5 <= bands['faa'] <= 0.5
+
+    def test_bands_has_all_required_keys(self):
+        sim = eeg_server._SimState()
+        _, bands = sim.step()
+        required = {'delta', 'theta', 'alpha', 'beta', 'gamma',
+                    'concentration', 'engagement_index', 'faa'}
+        assert required <= set(bands.keys())
+
+    def test_concentration_in_range(self):
+        sim = eeg_server._SimState()
+        for _ in range(30):
+            _, bands = sim.step()
+            assert 0.0 <= bands['concentration'] <= 100.0
+
+    def test_focus_transitions_smoothly(self):
+        """Low-pass filter means focus changes < 0.5 per step."""
+        sim = eeg_server._SimState()
+        prev_lp = sim._focus_lp
+        max_jump = 0.0
+        for _ in range(100):
+            sim.step()
+            jump = abs(sim._focus_lp - prev_lp)
+            max_jump = max(max_jump, jump)
+            prev_lp = sim._focus_lp
+        assert max_jump < 0.5
+
+
+# ── stream_sim frame fields ───────────────────────────────────────────────────
+class TestStreamSimFrame:
+    """Verify _SimState produces all fields that stream_sim includes in frames."""
+
+    def test_sim_bands_include_engagement_index_and_faa(self):
+        sim = eeg_server._SimState()
+        _, bands = sim.step()
+        assert 'engagement_index' in bands
+        assert 'faa' in bands
+
+    def test_sim_channels_count_matches_spatial_weights(self):
+        sim = eeg_server._SimState()
+        channels, _ = sim.step()
+        assert len(channels) == len(eeg_server.SPATIAL_W)
+
+
+# ── TGAM parse_payload ────────────────────────────────────────────────────────
+class TestTgamParsePayload:
+    """Verify parse_payload skips unknown TGCP codes without corrupting state."""
+
+    def _make_parser(self):
+        """Return (parse_payload, state_dict) with captured closure variables."""
+        attention = [50.0]
+        meditation = [50.0]
+        poor_signal = [200]
+        bands_raw = [0] * 8
+        raw_buf = []
+
+        def parse_payload(payload):
+            i = 0
+            while i < len(payload):
+                code = payload[i]; i += 1
+                if code == 0x02:
+                    poor_signal[0] = payload[i]; i += 1
+                elif code == 0x04:
+                    attention[0] = float(payload[i]); i += 1
+                elif code == 0x05:
+                    meditation[0] = float(payload[i]); i += 1
+                elif code == 0x16:
+                    i += 1
+                elif code == 0x80:
+                    if i + 1 < len(payload):
+                        raw_buf.append(int.from_bytes(payload[i:i+2], 'big', signed=True))
+                    i += 2
+                elif code == 0x83:
+                    for b in range(8):
+                        bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
+                        i += 3
+                else:
+                    if code < 0x80:
+                        i += 1
+                    elif i < len(payload):
+                        i += 1 + payload[i]
+
+        return parse_payload, {'attention': attention, 'meditation': meditation,
+                               'poor_signal': poor_signal, 'bands_raw': bands_raw}
+
+    def test_known_code_attention(self):
+        parse, state = self._make_parser()
+        parse([0x04, 75])
+        assert state['attention'][0] == 75.0
+
+    def test_known_code_poor_signal(self):
+        parse, state = self._make_parser()
+        parse([0x02, 0])
+        assert state['poor_signal'][0] == 0
+
+    def test_unknown_single_byte_code_skips_value(self):
+        """Unknown code 0x03 (< 0x80): skip its 1-byte value, then parse next code."""
+        parse, state = self._make_parser()
+        # [0x03, 0xFF, 0x04, 90] → unknown(0x03 + value 0xFF) → attention=90
+        parse([0x03, 0xFF, 0x04, 90])
+        assert state['attention'][0] == 90.0
+
+    def test_unknown_multi_byte_code_skips_length_and_value(self):
+        """Unknown code 0x85 (>= 0x80): next byte is length, skip length bytes."""
+        parse, state = self._make_parser()
+        # [0x85, 3, 0xAA, 0xBB, 0xCC, 0x04, 42] → skip 3 bytes → attention=42
+        parse([0x85, 3, 0xAA, 0xBB, 0xCC, 0x04, 42])
+        assert state['attention'][0] == 42.0
+
+    def test_multiple_known_codes_in_sequence(self):
+        parse, state = self._make_parser()
+        parse([0x02, 50, 0x04, 80, 0x05, 60])
+        assert state['poor_signal'][0] == 50
+        assert state['attention'][0] == 80.0
+        assert state['meditation'][0] == 60.0
+
+    def test_unknown_code_does_not_prevent_subsequent_parsing(self):
+        """After an unknown code, subsequent known codes must still be parsed."""
+        parse, state = self._make_parser()
+        parse([0x06, 0x00, 0x05, 33])   # 0x06 unknown + value → meditation=33
+        assert state['meditation'][0] == 33.0
+
+
 # ── DataFrame index vs sent-counter (stream_mental progress fix) ────────────
 class TestSentCounterIndependence:
     """Verify the pattern: if rows are skipped (NaN), the monotonic counter

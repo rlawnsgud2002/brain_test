@@ -26,6 +26,7 @@ import random
 import time
 import os
 import sys
+from collections import deque
 from typing import Optional
 
 try:
@@ -648,33 +649,95 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
     print("[MENTAL] Finished playback")
 
 # ── Simulation Source ─────────────────────────────────────────────────────────
+
+class _SimState:
+    """
+    Physiologically-plausible EEG simulation.
+
+    Models a participant alternating between relaxed and focused states using
+    a low-pass-filtered random walk so transitions are smooth (~3 s time constant).
+    Band powers follow known EEG-focus correlations:
+      - Alpha: high when relaxed (alpha desynchronisation on focus)
+      - Beta:  high when focused
+      - Theta: elevated during relaxed / drowsy states
+      - Delta: inversely related to wakefulness
+      - Gamma: increases with cognitive load
+    """
+
+    def __init__(self):
+        self._focus_lp     = 0.5          # low-pass filtered focus level 0..1
+        self._focus_target = 0.5
+        self._t            = 0
+        # Per-channel amplitude offsets that drift slowly (spatial variation)
+        self._ch_offset = [random.gauss(0, 5.0) for _ in range(14)]
+
+    def step(self):
+        self._t += 1
+        # Slowly change target focus (prime step avoids obvious periodicity)
+        if self._t % 47 == 0:
+            self._focus_target = 0.15 + random.random() * 0.70
+        # Low-pass filter: τ ≈ 25 steps = ~2.5 s
+        self._focus_lp += (self._focus_target - self._focus_lp) * 0.04
+        focus = max(0.0, min(1.0, self._focus_lp + random.gauss(0, 0.025)))
+
+        # Drift channel offsets (spatial heterogeneity)
+        for i in range(14):
+            self._ch_offset[i] += random.gauss(0, 0.15)
+            self._ch_offset[i]  = max(-12.0, min(12.0, self._ch_offset[i]))
+
+        # Band powers (arbitrary μV²/Hz units, consistent across frames)
+        delta = max(0.0, 35 + (1 - focus) * 20 + random.gauss(0, 4))
+        theta = max(0.0, 40 + (1 - focus) * 15 + random.gauss(0, 5))
+        alpha = max(0.0, 55 - focus * 30 + random.gauss(0, 7))
+        beta  = max(0.0, 22 + focus * 48 + random.gauss(0, 6))
+        gamma = max(0.0, 12 + focus * 25 + random.gauss(0, 3))
+
+        ei   = beta / (alpha + theta + 1e-9)
+        conc = float(max(0.0, min(100.0, (ei - 0.3) * 60 + 50)))
+        # FAA: small noise, slightly positive when focused (approach motivation)
+        faa  = round(max(-0.5, min(0.5, focus * 0.1 + random.gauss(0, 0.06))), 3)
+
+        # Per-channel concentration with spatial weighting + offset + noise
+        channels = []
+        for i, w in enumerate(SPATIAL_W):
+            v = conc * w + self._ch_offset[i] + random.gauss(0, 3.0)
+            channels.append(round(float(max(5.0, min(95.0, v))), 2))
+
+        return channels, {
+            'delta':            round(delta, 2),
+            'theta':            round(theta, 2),
+            'alpha':            round(alpha, 2),
+            'beta':             round(beta,  2),
+            'gamma':            round(gamma, 2),
+            'concentration':    round(conc,  2),
+            'engagement_index': round(ei,    4),
+            'faa':              round(faa,   3),
+        }
+
+
 async def stream_sim(ws, detector=None, cal_holder=None, exp_holder=None):
     print("[SIM] Starting simulation stream")
-    vals = [50.0] * 14
-    t    = 0.0
+    sim = _SimState()
+    t   = 0.0
     while True:
         t += 0.1
-        for i in range(14):
-            vals[i] += (random.random() - 0.5) * 6
-            vals[i]  = max(5.0, min(95.0, vals[i]))
-        avg   = sum(vals) / 14
-        focus = avg / 100
-        b = {
-            'delta': round(30 + random.gauss(0, 5),  2),
-            'theta': round(40 + random.gauss(0, 7),  2),
-            'alpha': round(60 - focus*40 + random.gauss(0, 5), 2),
-            'beta':  round(30 + focus*50 + random.gauss(0, 5), 2),
-            'gamma': round(20 + focus*30 + random.gauss(0, 4), 2),
-            'concentration': round(avg, 2)
+        channels, bands = sim.step()
+        update_state(channels, bands)
+        frame = {
+            'type':            'eeg',
+            'channels':        channels,
+            'bands':           bands,
+            'contact_quality': [1.0] * 14,
+            'artifacts':       {'blinks': 0, 'rejected_ratio': 0.0, 'emg_warn': False},
+            'progress':        -1,
+            'timestamp':       round(t, 2),
+            'source':          'sim',
         }
-        update_state(vals, b)
-        frame = {'type': 'eeg', 'channels': STATE['channels'],
-                 'bands': b, 'progress': -1, 'timestamp': round(t, 2)}
         _add_vpattern(frame, detector)
         if cal_holder:
-            await _push_cal(ws, cal_holder, b)
+            await _push_cal(ws, cal_holder, bands)
         if exp_holder:
-            await _tick_experiment(ws, exp_holder, b)
+            await _tick_experiment(ws, exp_holder, bands)
         try:
             await ws.send(json.dumps(frame))
             await asyncio.sleep(0.1)
@@ -932,7 +995,7 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
         meditation = 50.0
         poor_signal = 200
         bands_raw = [0] * 8   # delta,theta,lowA,highA,lowB,highB,lowG,midG
-        raw_buf = []
+        raw_buf = deque(maxlen=512)
 
         def parse_payload(payload):
             nonlocal attention, meditation, poor_signal, bands_raw
@@ -951,17 +1014,19 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
                     if i + 1 < len(payload):
                         raw_val = int.from_bytes(payload[i:i+2], 'big', signed=True)
                         raw_buf.append(raw_val)
-                        if len(raw_buf) > 512:
-                            raw_buf.pop(0)
                     i += 2
                 elif code == 0x83:                   # band powers (24 bytes)
                     for b in range(8):
                         bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
                         i += 3
                 else:
-                    # Unknown code: skip 1 byte instead of aborting the whole payload —
-                    # a single bad byte shouldn't discard valid data later in the packet
-                    pass
+                    # TGCP: single-byte codes (<0x80) have 1 value byte;
+                    # multi-byte codes (>=0x80) have a length byte then that many value bytes.
+                    # Skipping correctly prevents downstream bytes from being misread as codes.
+                    if code < 0x80:
+                        i += 1
+                    elif i < len(payload):
+                        i += 1 + payload[i]
 
         async def send_loop():
             while True:
@@ -1127,7 +1192,7 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
                 'concentration':    round(_conc, 2),
                 'engagement_index': round(_ei,   4),
                 'faa':              round(_faa,  4),
-                'meditation': None,
+                'meditation':       0.0,
             }
 
             # Build 6-channel vals (ref channels get avg value)
