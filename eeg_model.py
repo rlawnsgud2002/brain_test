@@ -206,16 +206,27 @@ if TORCH_OK:
             self._ring    = []          # list of (1, n_ch, n_time) tensors
             self.v_prob   = 0.0
             self.v_active = False
+            self._cooldown = 0
             self._fallback = VPatternRuleBased()
 
             self.model = EEGNetLSTM(n_ch, n_time, seq_len)
             if os.path.exists(model_path):
-                ckpt = torch.load(model_path, map_location=self.device)
-                self.model.load_state_dict(ckpt['model_state'])
-                self.model.to(self.device)
-                self.model.eval()
-                self._model_loaded = True
-                print(f"[ML] Loaded V-pattern model: {model_path}")
+                try:
+                    ckpt = torch.load(model_path, map_location=self.device)
+                    state = ckpt.get('model_state') if isinstance(ckpt, dict) else None
+                    if state is None:
+                        raise KeyError("checkpoint missing 'model_state'")
+                    self.model.load_state_dict(state)
+                    self.model.to(self.device)
+                    self.model.eval()
+                    self._model_loaded = True
+                    print(f"[ML] Loaded V-pattern model: {model_path}")
+                except Exception as e:
+                    # Corrupt / incompatible checkpoint (KeyError, RuntimeError on
+                    # state_dict mismatch, unpickling errors, ...) must not crash
+                    # server startup — degrade gracefully to the rule-based detector.
+                    self._model_loaded = False
+                    print(f"[ML] Failed to load model ({model_path}): {e}. Using rule-based fallback.")
             else:
                 self._model_loaded = False
                 print(f"[ML] Model not found ({model_path}). Using rule-based fallback.")
@@ -256,10 +267,12 @@ if TORCH_OK:
             # stack → (seq_len, 1, n_ch, n_time); unsqueeze(0) → (1, seq_len, 1, n_ch, n_time)
             seq = torch.stack(self._ring, dim=0).unsqueeze(0)
             prob = float(self.model.predict_proba(seq)[0])
+            # Non-finite prob (NaN/inf from corrupt weights or NaN input) would
+            # serialize to invalid JSON and break the client's JSON.parse.
+            if not np.isfinite(prob):
+                return {**rb, 'rule_based': True}
 
             # Cooldown: prevent re-firing every frame while prob stays > 0.5
-            if not hasattr(self, '_cooldown'):
-                self._cooldown = 0
             self.v_prob = round(prob, 3)
             if self._cooldown > 0:
                 self._cooldown -= 1

@@ -284,6 +284,15 @@ class TestSummary:
         s = cal.summary()
         assert 'Low=' in s and 'High=' in s
 
+    def test_summary_with_partial_result_no_keyerror(self):
+        # load() only validates 'thresholds'; an externally-edited JSON may omit
+        # relax/focus/quality. summary() must not raise KeyError.
+        cal = Calibrator(save_path='/tmp/test_cal_partial.json')
+        cal._result = {'thresholds': {'th_low': 30, 'th_high': 70, 'slope': 1.0}}
+        s = cal.summary()   # must not raise
+        assert 'Low=30' in s and 'High=70' in s
+        assert '?' in s     # missing quality grade rendered as '?'
+
 
 # ── Degenerate buffer warning ────────────────────────────────────────────────
 class TestDegenerateBuffer:

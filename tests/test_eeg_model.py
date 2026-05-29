@@ -178,7 +178,45 @@ class TestFactory:
         assert hasattr(det, 'push')
 
     def test_make_detector_works_without_torch(self):
-        # Even if torch isn't installed, this must not crash
+        # The factory's detector must be pushable. Signature differs by type:
+        # VPatternML.push(eeg_window, concentration) vs rule-based push(concentration).
         det = make_detector(model_path='/nonexistent/model.pt')
-        result = det.push(50.0)
+        result = det.push(None, 50.0) if TORCH_OK else det.push(50.0)
         assert 'v_prob' in result
+
+
+# ── Corrupt model checkpoint handling (requires torch) ───────────────────────
+@pytest.mark.skipif(not TORCH_OK, reason="PyTorch not installed")
+class TestCorruptModelLoad:
+    def test_corrupt_file_does_not_crash(self, tmp_path):
+        # A garbage .pt file must not crash construction — falls back to rule-based.
+        from eeg_model import VPatternML
+        bad = tmp_path / "bad_model.pt"
+        bad.write_bytes(b"this is not a valid torch checkpoint")
+        det = VPatternML(model_path=str(bad))
+        assert det._model_loaded is False
+
+    def test_checkpoint_missing_model_state_key(self, tmp_path):
+        # Valid torch file but wrong schema (no 'model_state') → graceful fallback.
+        import torch
+        from eeg_model import VPatternML
+        path = tmp_path / "wrong_schema.pt"
+        torch.save({'not_model_state': 123}, str(path))
+        det = VPatternML(model_path=str(path))
+        assert det._model_loaded is False
+
+    def test_fallback_detector_still_works_after_bad_load(self, tmp_path):
+        from eeg_model import VPatternML
+        bad = tmp_path / "bad.pt"
+        bad.write_bytes(b"\x00\x01\x02 garbage")
+        det = VPatternML(model_path=str(bad))
+        # push() must return a valid result via the rule-based fallback
+        result = det.push(None, 50.0)
+        assert 'v_prob' in result
+        assert result['v_prob'] == result['v_prob']  # not NaN
+
+    def test_cooldown_initialized_in_constructor(self, tmp_path):
+        # _cooldown must exist right after construction (no hasattr hack needed).
+        from eeg_model import VPatternML
+        det = VPatternML(model_path='/nonexistent/model.pt')
+        assert det._cooldown == 0

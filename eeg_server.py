@@ -611,6 +611,9 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
 
         ratio = beta / (alpha + 1e-9)
         conc  = float(np.clip((ratio - 0.3) * 40 + 50, 0, 100))
+        # Engagement Index β/(α+θ) — keep field set consistent with sim/compute_frame
+        # so the client always receives the same band keys regardless of source.
+        ei = float(beta / (alpha + theta + 1e-9))
 
         channels = bands_to_14ch(delta, theta, alpha, beta, gamma)
 
@@ -620,7 +623,9 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
             'alpha': round(alpha, 2),
             'beta':  round(beta,  2),
             'gamma': round(gamma, 2),
-            'concentration': round(conc, 2)
+            'concentration': round(conc, 2),
+            'engagement_index': round(ei, 4),
+            'faa': 0.0,   # frequency-only dataset has no spatial info for FAA
         }
         # Use original df index for progress (matches file position) but monotonic frame counter for timestamp
         frame = {

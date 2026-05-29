@@ -271,13 +271,18 @@ class Calibrator:
         if not self._result:
             return "Calibration not done."
         r = self._result
-        t = r['thresholds']
+        # load() only guarantees 'thresholds'; relax/focus/quality may be absent in
+        # externally-edited JSON, so access defensively to avoid KeyError.
+        t       = r.get('thresholds', {})
+        relax   = r.get('relax', {})
+        focus   = r.get('focus', {})
+        quality = r.get('quality', {})
         return (
             f"캘리브레이션 완료\n"
-            f"  휴식 집중도: {r['relax']['conc_mean']:.1f} ± {r['relax']['conc_std']:.1f}\n"
-            f"  집중 집중도: {r['focus']['conc_mean']:.1f} ± {r['focus']['conc_std']:.1f}\n"
-            f"  개인 임계값: Low={t['th_low']}  High={t['th_high']}  Slope={t['slope']}\n"
-            f"  품질: {r['quality']['grade']} ({r['quality']['score']}/100)"
+            f"  휴식 집중도: {relax.get('conc_mean', 0):.1f} ± {relax.get('conc_std', 0):.1f}\n"
+            f"  집중 집중도: {focus.get('conc_mean', 0):.1f} ± {focus.get('conc_std', 0):.1f}\n"
+            f"  개인 임계값: Low={t.get('th_low','?')}  High={t.get('th_high','?')}  Slope={t.get('slope','?')}\n"
+            f"  품질: {quality.get('grade','?')} ({quality.get('score',0)}/100)"
         )
 
 

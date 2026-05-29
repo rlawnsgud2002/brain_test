@@ -171,7 +171,17 @@ async def handle_client(websocket):
             try:
                 while True:
                     vals, bands = source.step()
-                    avg = sum(vals[:4 if device=='muse' else 14]) / (4 if device=='muse' else 14)
+                    # Compute the concentration scalar the V-detector runs on.
+                    # TGAM is single-channel: its 14-wide vals are 1 real value + 13
+                    # padding (=50), so a plain mean would swamp the signal (~48-53)
+                    # and the V-pattern could never cross thLow/thHigh. Use the
+                    # device's own concentration metric when present.
+                    if 'concentration' in bands:
+                        avg = bands['concentration']
+                    elif device == 'muse':
+                        avg = sum(vals[:4]) / 4          # 4 real Muse channels
+                    else:
+                        avg = sum(vals) / len(vals)      # sim: all 14 channels
                     v_active = detector.step(avg, CFG['thLow'], CFG['thHigh'], CFG['dt'])
 
                     msg = {
