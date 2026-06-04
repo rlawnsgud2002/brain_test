@@ -253,11 +253,12 @@ class ExperimentRunner:
         }
 
     def _log_marker(self, marker_type: str, label: str = '',
-                    bands: Optional[dict] = None, concentration: float = 0.0) -> Marker:
+                    bands: Optional[dict] = None,
+                    concentration: Optional[float] = None) -> Marker:
         phase = self._current_phase() if self._phase_idx >= 0 else Phase('', 0, '', '', '')
-        # Use explicit 0-check rather than `or` — concentration=0.0 is a valid (low-focus) value
-        # that should not be overridden by bands lookup
-        conc  = concentration if concentration != 0.0 else (bands or {}).get('concentration', 0.0)
+        # None means "not explicitly provided" — fall back to bands lookup.
+        # Explicit 0.0 (valid low-focus reading) is preserved as-is.
+        conc  = (bands or {}).get('concentration', 0.0) if concentration is None else concentration
         m = Marker(
             timestamp   = time.time(),
             elapsed     = round(self.elapsed(), 3),

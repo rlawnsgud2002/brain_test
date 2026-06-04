@@ -175,7 +175,7 @@ def load_mental(csv_file):
         print(f"[DATA] Dropping {n_dropped} rows with NaN/Inf in alpha/beta")
     alphas = alphas[valid_mask]
     betas  = betas[valid_mask]
-    df     = df.iloc[valid_mask].reset_index(drop=True)
+    df     = df[valid_mask].reset_index(drop=True)
     if len(alphas) < WIN_SAMPLES:
         sys.exit(f"[ERROR] Only {len(alphas)} valid rows after NaN drop — need at least {WIN_SAMPLES}")
     concs  = np.clip((betas / (alphas + 1e-9) - 0.3) * 40 + 50, 0, 100)
