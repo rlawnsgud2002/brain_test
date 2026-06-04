@@ -387,12 +387,17 @@ class TestTgamParsePayload:
                 elif code == 0x16:
                     i += 1
                 elif code == 0x80:
-                    if i + 1 < len(payload):
+                    vlen = payload[i] if i < len(payload) else 0
+                    i += 1
+                    if vlen >= 2 and i + 1 < len(payload):
                         raw_buf.append(int.from_bytes(payload[i:i+2], 'big', signed=True))
-                    i += 2
+                    i += vlen
                 elif code == 0x83:
+                    vlen = payload[i] if i < len(payload) else 0
+                    i += 1
                     for b in range(8):
-                        bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
+                        if i + 2 < len(payload):
+                            bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
                         i += 3
                 else:
                     if code < 0x80:
@@ -401,7 +406,8 @@ class TestTgamParsePayload:
                         i += 1 + payload[i]
 
         return parse_payload, {'attention': attention, 'meditation': meditation,
-                               'poor_signal': poor_signal, 'bands_raw': bands_raw}
+                               'poor_signal': poor_signal, 'bands_raw': bands_raw,
+                               'raw_buf': raw_buf}
 
     def test_known_code_attention(self):
         parse, state = self._make_parser()
@@ -439,6 +445,37 @@ class TestTgamParsePayload:
         parse, state = self._make_parser()
         parse([0x06, 0x00, 0x05, 33])   # 0x06 unknown + value → meditation=33
         assert state['meditation'][0] == 33.0
+
+    def test_band_power_packet_skips_length_byte(self):
+        """0x83 = ASIC_EEG_POWER: [code][len=0x18][8×3-byte values].
+        The length byte (0x18) must be skipped, else it bleeds into band 0."""
+        parse, state = self._make_parser()
+        band_bytes = []
+        for v in range(1, 9):
+            band_bytes += [0x00, 0x00, v]   # 3-byte big-endian == v
+        parse([0x83, 0x18] + band_bytes)
+        assert state['bands_raw'] == [1, 2, 3, 4, 5, 6, 7, 8]
+
+    def test_attention_parsed_after_band_powers(self):
+        """Regression: the 0x83 length-byte off-by-one used to misalign every
+        byte after the band block, corrupting attention/meditation that follow."""
+        parse, state = self._make_parser()
+        band_bytes = []
+        for v in range(1, 9):
+            band_bytes += [0x00, 0x00, v]
+        # Realistic packet: poor_signal, ASIC_EEG_POWER, attention, meditation
+        parse([0x02, 0x00, 0x83, 0x18] + band_bytes + [0x04, 10, 0x05, 12])
+        assert state['poor_signal'][0] == 0
+        assert state['attention'][0] == 10.0
+        assert state['meditation'][0] == 12.0
+        assert state['bands_raw'] == [1, 2, 3, 4, 5, 6, 7, 8]
+
+    def test_raw_eeg_skips_length_byte(self):
+        """0x80 = RAW: [code][len=0x02][2-byte big-endian int16].
+        Length byte must be skipped, else it becomes the value's high byte."""
+        parse, state = self._make_parser()
+        parse([0x80, 0x02, 0x01, 0x00])   # value 0x0100 == 256
+        assert state['raw_buf'] == [256]
 
 
 # ── DataFrame index vs sent-counter (stream_mental progress fix) ────────────

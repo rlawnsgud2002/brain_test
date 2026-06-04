@@ -194,7 +194,7 @@
     function simulateEEG() {
       if(CONFIG.manualControl) {
         for(let i=0; i<14; i++) {
-          CONFIG.values[i] = CONFIG.manualValue + (Math.random()-0.5)*20;
+          CONFIG.values[i] = Math.max(0, Math.min(100, CONFIG.manualValue + (Math.random()-0.5)*20));
         }
       } else {
         for(let i=0; i<14; i++) {
@@ -230,10 +230,11 @@
           if(nx*nx + ny*ny > 1) continue;
 
           let val=0, wsum=0;
-          for(let e of CONFIG.electrodes) {
+          for(let ei=0; ei<CONFIG.electrodes.length; ei++) {
+            const e = CONFIG.electrodes[ei];
             const dist = Math.sqrt((nx-e.x)**2 + (ny-e.y)**2);
             const w = Math.exp(-(dist**2)/0.3);
-            val += CONFIG.values[CONFIG.electrodes.indexOf(e)] * w;
+            val += CONFIG.values[ei] * w;
             wsum += w;
           }
           val = val/wsum;
@@ -260,6 +261,12 @@
     }
 
     function drawGraph(ctx) {
+      // Sync backing-store resolution to displayed size so the timeline isn't
+      // drawn at the default 300×150 then stretched (blurry / wrong aspect).
+      const cw = ctx.canvas.clientWidth, ch = ctx.canvas.clientHeight;
+      if(cw > 0 && ch > 0 && (ctx.canvas.width !== cw || ctx.canvas.height !== ch)) {
+        ctx.canvas.width = cw; ctx.canvas.height = ch;
+      }
       ctx.fillStyle='rgba(10,14,39,0.3)'; ctx.fillRect(0,0,ctx.canvas.width,ctx.canvas.height);
       ctx.strokeStyle='#ff0080'; ctx.lineWidth=2;
 

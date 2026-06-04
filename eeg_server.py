@@ -1015,14 +1015,21 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
                     meditation = float(payload[i]); i += 1
                 elif code == 0x16:                   # blink
                     i += 1
-                elif code == 0x80:                   # raw EEG (2 bytes)
-                    if i + 1 < len(payload):
+                elif code == 0x80:                   # raw EEG: [len][2-byte int16]
+                    # Multi-byte code: a length byte (=0x02) precedes the value.
+                    vlen = payload[i] if i < len(payload) else 0
+                    i += 1
+                    if vlen >= 2 and i + 1 < len(payload):
                         raw_val = int.from_bytes(payload[i:i+2], 'big', signed=True)
                         raw_buf.append(raw_val)
-                    i += 2
-                elif code == 0x83:                   # band powers (24 bytes)
+                    i += vlen
+                elif code == 0x83:                   # band powers: [len=0x18][24 bytes]
+                    # Multi-byte code: skip the length byte (=24) before the 8×3-byte values.
+                    vlen = payload[i] if i < len(payload) else 0
+                    i += 1
                     for b in range(8):
-                        bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
+                        if i + 2 < len(payload):
+                            bands_raw[b] = int.from_bytes(payload[i:i+3], 'big')
                         i += 3
                 else:
                     # TGCP: single-byte codes (<0x80) have 1 value byte;
@@ -1163,6 +1170,10 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
                 continue
             timeout_count = 0
             buf.append(sample[:6])   # TP9, AF7, FP1, FP2, AF8, TP10
+            # Cap buffer growth — only the last WIN samples are ever used, so trim
+            # to avoid an unbounded memory leak over long (256 Hz) Muse sessions.
+            if len(buf) > WIN * 2:
+                del buf[:-WIN]
             if len(buf) < WIN:
                 continue
 
