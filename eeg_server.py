@@ -215,6 +215,45 @@ def bandpower(signal, fs, fmin, fmax):
     result = float(np.mean(psd[mask])) if mask.any() else 0.0
     return result if np.isfinite(result) else 0.0
 
+def channel_quality(eeg):
+    """
+    Per-channel signal-quality proxy (0=disconnected .. 1=excellent),
+    derived from each channel's coefficient of variation.
+    Flat line → ~0 (electrode off); excessive noise/clipping → low.
+    """
+    q = []
+    for ch in eeg:
+        std_v = float(np.std(ch))
+        mean_abs = float(np.mean(np.abs(ch))) + 1e-9
+        cv = std_v / mean_abs
+        if cv < 0.05:           qv = 0.05   # flat / disconnected
+        elif cv > 10.0:         qv = 0.15   # excessive noise / clipping
+        else:                   qv = float(np.clip(0.15 + cv * 0.17, 0.15, 1.0))
+        q.append(round(qv, 3))
+    return q
+
+def signal_quality_scalar(contact_quality, emg_warn=False, rejected_ratio=0.0):
+    """
+    Aggregate per-channel contact quality into a single 0.0-1.0 scalar.
+    Consumed by the v3 bridge (normalize_brain_test_frame) as the optional
+    `quality` field — distinct from, and complementary to, the per-channel
+    `contact_quality` array (which is kept as-is).
+
+      base = mean(contact_quality)
+      if emg_warn:  base *= 0.7       # muscle-artifact contamination
+      base *= (1 - rejected_ratio)    # blink/artifact rejection ratio
+    """
+    if not contact_quality:
+        return 0.5
+    base = float(sum(contact_quality) / len(contact_quality))
+    if emg_warn:
+        base *= 0.7
+    # Guard rejected_ratio: ignore NaN (x != x) and clamp to [0,1]
+    rr = rejected_ratio if (isinstance(rejected_ratio, (int, float))
+                            and rejected_ratio == rejected_ratio) else 0.0
+    base *= (1.0 - max(0.0, min(1.0, rr)))
+    return round(max(0.0, min(1.0, base)), 3)
+
 def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=None):
     """
     baseline: dict with keys 'alpha', 'theta', 'beta' (from calibration relax phase)
@@ -228,6 +267,7 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=
                 'type': 'eeg',
                 'channels': [50.0] * 14,
                 'contact_quality': [0.5] * 14,
+                'quality': 0.5,
                 'artifacts': {**artifacts, 'emg_warn': False, 'invalid_input': True},
                 'bands': {'delta':0,'theta':0,'alpha':0,'beta':0,'gamma':0,
                           'concentration':50.0,'engagement_index':0.0,'faa':0.0}
@@ -288,20 +328,17 @@ def compute_frame(eeg_14ch, fs=FS, apply_preprocess=True, notch_hz=50, baseline=
 
     # Signal quality proxy per channel (0=disconnected, 1=excellent)
     # Based on coefficient of variation: flat line → 0, noisy → low, good signal → high
-    sig_quality = []
-    for ch in eeg_14ch:
-        std_v = float(np.std(ch))
-        mean_abs = float(np.mean(np.abs(ch))) + 1e-9
-        cv = std_v / mean_abs
-        if cv < 0.05:           q = 0.05   # flat / disconnected
-        elif cv > 10.0:         q = 0.15   # excessive noise / clipping
-        else:                   q = float(np.clip(0.15 + cv * 0.17, 0.15, 1.0))
-        sig_quality.append(round(q, 3))
+    sig_quality = channel_quality(eeg_14ch)
+
+    # Single 0..1 scalar for the v3 bridge — folds in EMG + blink-rejection
+    quality = signal_quality_scalar(sig_quality, emg_warn=emg_warn,
+                                    rejected_ratio=artifacts.get('rejected_ratio', 0.0))
 
     return {
         'type': 'eeg',
         'channels': [round(v, 2) for v in norm],
         'contact_quality': sig_quality,
+        'quality': quality,
         'artifacts': {**artifacts, 'emg_warn': emg_warn},
         'bands': {
             'delta': round(avg(0)*1e6, 2),
@@ -632,6 +669,9 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
             'type': 'eeg',
             'channels': [round(v, 2) for v in channels],
             'bands': bands_out,
+            # Pre-computed clean dataset playback — no raw signal to score, so
+            # report a stable high quality for v3-bridge schema consistency.
+            'quality': 0.9,
             'progress': round((i + 1) / n, 3),
             'timestamp': round(sent * 0.5, 2),
             'label': label_names.get(lbl, 'UNKNOWN')
@@ -728,11 +768,16 @@ async def stream_sim(ws, detector=None, cal_holder=None, exp_holder=None):
         t += 0.1
         channels, bands = sim.step()
         update_state(channels, bands)
+        # Simulated electrode quality: good but realistically noisy (never a flat
+        # 1.0), so the v3 bridge receives a varying `quality` scalar each frame.
+        cq = [round(min(1.0, max(0.3, random.gauss(0.92, 0.04))), 3) for _ in range(14)]
+        quality = signal_quality_scalar(cq)
         frame = {
             'type':            'eeg',
             'channels':        channels,
             'bands':           bands,
-            'contact_quality': [1.0] * 14,
+            'contact_quality': cq,
+            'quality':         quality,
             'artifacts':       {'blinks': 0, 'rejected_ratio': 0.0, 'emg_warn': False},
             'progress':        -1,
             'timestamp':       round(t, 2),
@@ -1070,10 +1115,14 @@ async def stream_tgam(ws, serial_port=None, detector=None, cal_holder=None, exp_
                 if v_result.get('v_active'):
                     print(f"[TGAM] V-pattern! prob={v_result['v_prob']:.2f} conc={conc:.1f}")
 
+                # TGAM poor_signal: 0 (good contact) .. 200 (no contact) → quality 1..0
+                tgam_quality = round(max(0.0, min(1.0, 1.0 - poor_signal / 200.0)), 3)
+
                 payload_ws = {
                     'type': 'eeg',
                     'channels': [round(conc, 2)],
                     'bands': bands_out,
+                    'quality': tgam_quality,
                     'artifacts': artifacts,
                     'vpattern': v_result,
                     'source': 'tgam'
@@ -1225,10 +1274,15 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
             vdet = detector
             v_result = vdet.push(bands_out['concentration']) if vdet else {'v_prob': 0.0, 'v_active': False}
 
+            # Single 0..1 quality scalar for the v3 bridge (from the 4 active channels)
+            _quality = signal_quality_scalar(channel_quality(clean),
+                                             rejected_ratio=artifacts.get('rejected_ratio', 0.0))
+
             payload = {
                 'type': 'eeg',
                 'channels': [round(v, 2) for v in channels],
                 'bands': bands_out,
+                'quality': _quality,
                 'artifacts': artifacts,
                 'vpattern': v_result,
                 'source': 'muse'

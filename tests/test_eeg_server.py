@@ -152,6 +152,70 @@ class TestComputeFrame:
         for q in frame['contact_quality']:
             assert 0 <= q <= 1
 
+    def test_quality_scalar_present_and_bounded(self, eeg_14ch):
+        # v3 bridge consumes a single `quality` scalar alongside contact_quality
+        frame = eeg_server.compute_frame(eeg_14ch, fs=128, apply_preprocess=False)
+        assert 'quality' in frame
+        assert 0.0 <= frame['quality'] <= 1.0
+        # contact_quality must still be present (not replaced by the scalar)
+        assert 'contact_quality' in frame
+
+    def test_quality_scalar_on_invalid_input(self):
+        # Empty/wrong-shape input still returns a quality field (schema consistency)
+        frame = eeg_server.compute_frame(np.empty((0, 0)), fs=128)
+        assert 'quality' in frame
+        assert 0.0 <= frame['quality'] <= 1.0
+
+
+# ── quality helpers (channel_quality / signal_quality_scalar) ────────────────
+class TestSignalQualityScalar:
+    def test_empty_returns_neutral(self):
+        assert eeg_server.signal_quality_scalar([]) == 0.5
+
+    def test_all_perfect_is_one(self):
+        assert eeg_server.signal_quality_scalar([1.0] * 14) == 1.0
+
+    def test_emg_warn_reduces(self):
+        base = eeg_server.signal_quality_scalar([1.0] * 14)
+        emg  = eeg_server.signal_quality_scalar([1.0] * 14, emg_warn=True)
+        assert emg < base
+        assert abs(emg - 0.7) < 1e-6
+
+    def test_rejected_ratio_reduces(self):
+        q = eeg_server.signal_quality_scalar([1.0] * 14, rejected_ratio=0.5)
+        assert abs(q - 0.5) < 1e-6
+
+    def test_clipped_0_1(self):
+        assert eeg_server.signal_quality_scalar([5.0] * 4) <= 1.0
+        assert eeg_server.signal_quality_scalar([-3.0] * 4) >= 0.0
+
+    def test_nan_rejected_ratio_ignored(self):
+        q = eeg_server.signal_quality_scalar([1.0] * 4, rejected_ratio=float('nan'))
+        assert q == 1.0
+
+    def test_varies_with_input(self):
+        # Sim relies on per-frame noisy contact_quality producing a varying scalar
+        a = eeg_server.signal_quality_scalar([0.9] * 14)
+        b = eeg_server.signal_quality_scalar([0.8] * 14)
+        assert a != b
+
+
+@pytest.mark.skipif(not eeg_server.NUMPY_OK, reason="numpy not available")
+class TestChannelQuality:
+    def test_length_matches_input(self):
+        eeg = np.random.randn(8, 256)
+        assert len(eeg_server.channel_quality(eeg)) == 8
+
+    def test_values_bounded(self):
+        eeg = np.random.randn(4, 256) * 20
+        for q in eeg_server.channel_quality(eeg):
+            assert 0.0 <= q <= 1.0
+
+    def test_flat_channel_low_quality(self):
+        # A flat (disconnected) channel → near-zero quality
+        eeg = np.zeros((1, 256))
+        assert eeg_server.channel_quality(eeg)[0] <= 0.1
+
 
 # ── Settings validation (extracted from recv_loop) ──────────────────────────
 class TestSettingsValidation:
