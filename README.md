@@ -46,16 +46,23 @@ python eeg_server.py --source sim
 | `muse` | Muse S (muselsl/LSL) | — |
 | `tgam` | NeuroSky / TGAM (시리얼) | `--serial-port COM3` 또는 `/dev/ttyUSB0` |
 | `emotiv` | Emotiv EPOC X (Cortex API) | `--emotiv-id ID --emotiv-secret SECRET` |
+| `openbci` | OpenBCI Ganglion(4ch)/Cyton(8ch) | `--board ganglion\|cyton --serial COM3` |
 
 예시:
 
 ```bash
 python eeg_server.py --source deap --file data/s01.dat --trial 0 --speed 2.0
 python eeg_server.py --source tgam --serial-port /dev/ttyUSB0
+python eeg_server.py --source openbci --board cyton --serial /dev/ttyUSB0
 ```
 
-> 실제 기기(`muse` / `tgam` / `emotiv`)는 각각 `muselsl`·`pyserial`·Emotiv Cortex
-> App이 필요합니다. 미설치/미연결 시 자동으로 시뮬레이션으로 폴백합니다.
+> 실제 기기(`muse` / `tgam` / `emotiv` / `openbci`)는 각각 `muselsl`·`pyserial`·Emotiv
+> Cortex App·`brainflow`가 필요합니다. 미설치/미연결 시 자동으로 시뮬레이션으로
+> 폴백합니다.
+
+> 모든 소스는 v3 브릿지 호환을 위해 프레임마다 `quality`(0.0~1.0) 신호 품질 스칼라를
+> 함께 전송합니다. 실험(experiment) 중 `stimulus` 마커가 발생하면 습관화 지표
+> `response_amplitude` / `habituation_index`가 추가로 출력됩니다.
 
 ---
 
@@ -134,3 +141,9 @@ python train_model.py --source mental --file data/mental-state.csv
 
 학습 결과는 `models/vpattern_model.pt`에 저장되며, `eeg_server.py`가
 시작 시 자동으로 로드합니다.
+
+---
+
+## 라이선스
+
+[MIT License](LICENSE) — 자유롭게 사용·수정·배포할 수 있습니다.
