@@ -22,6 +22,7 @@ Usage:
 import json
 import os
 import time
+from collections import deque
 from dataclasses import dataclass, field, asdict
 from typing import List, Optional
 
@@ -96,6 +97,9 @@ class ExperimentRunner:
     Call tick() at ~1Hz; it returns status dicts for the client.
     """
 
+    RESP_WINDOW     = 0.5   # seconds before/after a stimulus for beta averaging
+    RESP_BASELINE_N = 5     # first N stimulus responses define the baseline
+
     def __init__(self, protocol='short', custom_phases: Optional[List[Phase]] = None):
         if custom_phases is not None:
             if not custom_phases:
@@ -115,6 +119,13 @@ class ExperimentRunner:
         self._state         = 'idle'
         self._last_eeg      = {}
 
+        # ── Habituation (Phase 2): response_amplitude around stimulus markers ──
+        self._beta_hist: deque = deque()          # (wall_time, beta) within RESP_WINDOW
+        self._pending_resp     = None             # in-flight stimulus capture
+        self._baseline_responses: List[float] = []
+        self._baseline_response = None            # mean of first RESP_BASELINE_N
+        self._last_response    = {}
+
     # ── Public ────────────────────────────────────────────────────────────────
 
     def start(self) -> dict:
@@ -124,6 +135,11 @@ class ExperimentRunner:
         self._state      = 'running'
         self.done        = False
         self.markers.clear()
+        self._beta_hist.clear()
+        self._pending_resp = None
+        self._baseline_responses.clear()
+        self._baseline_response = None
+        self._last_response = {}
         self._log_marker('phase_start')
         return self._status()
 
@@ -152,9 +168,72 @@ class ExperimentRunner:
                 'phase_progress':  round(progress, 3)}
 
     def add_marker(self, label: str, eeg_bands: Optional[dict] = None) -> dict:
-        """Manual behavioral marker (e.g., stimulus onset, key press)."""
-        m = self._log_marker('manual', label=label, bands=eeg_bands or self._last_eeg)
+        """Manual behavioral marker (e.g., stimulus onset, key press).
+
+        A marker whose label contains 'stim' also begins habituation
+        response-amplitude capture (see push_signal / mark_stimulus).
+        """
+        bands = eeg_bands or self._last_eeg
+        m = self._log_marker('manual', label=label, bands=bands)
+        if 'stim' in (label or '').lower():
+            self.mark_stimulus(bands)
         return asdict(m)
+
+    # ── Habituation metrics (Phase 2) ───────────────────────────────────────────
+    def push_signal(self, bands: Optional[dict] = None) -> dict:
+        """
+        Feed per-frame bands so response_amplitude can be measured around stimulus
+        markers. Maintains a rolling beta-power history (RESP_WINDOW seconds).
+
+        Returns a dict with response metrics on the frame where a stimulus response
+        completes (≥ RESP_WINDOW after onset):
+            {response_amplitude, baseline_response, habituation_index, n_responses}
+        Otherwise returns {} (nothing to report this frame).
+        """
+        if self._state != 'running':
+            return {}
+        now  = time.time()
+        beta = float(bands.get('beta', 0.0)) if bands else 0.0
+        self._beta_hist.append((now, beta))
+        cutoff = now - self.RESP_WINDOW
+        while self._beta_hist and self._beta_hist[0][0] < cutoff:
+            self._beta_hist.popleft()
+        if self._pending_resp is not None:
+            self._pending_resp['post'].append(beta)
+            if now - self._pending_resp['t0'] >= self.RESP_WINDOW:
+                return self._finalize_response()
+        return {}
+
+    def mark_stimulus(self, bands: Optional[dict] = None) -> None:
+        """Register a stimulus onset: snapshot pre-stimulus beta (last RESP_WINDOW
+        seconds) and begin accumulating post-stimulus beta."""
+        now = time.time()
+        if bands:
+            self._beta_hist.append((now, float(bands.get('beta', 0.0))))
+        pre = [b for (_, b) in self._beta_hist]
+        pre_mean = sum(pre) / len(pre) if pre else 0.0
+        self._pending_resp = {'t0': now, 'pre_mean': pre_mean, 'post': []}
+
+    def _finalize_response(self) -> dict:
+        """Close an in-flight stimulus capture and compute habituation metrics."""
+        p = self._pending_resp
+        self._pending_resp = None
+        post_mean = sum(p['post']) / len(p['post']) if p['post'] else 0.0
+        amp = round(post_mean - p['pre_mean'], 4)
+        # Baseline = running mean of the first N responses, then frozen
+        if len(self._baseline_responses) < self.RESP_BASELINE_N:
+            self._baseline_responses.append(amp)
+            self._baseline_response = round(
+                sum(self._baseline_responses) / len(self._baseline_responses), 4)
+        base = self._baseline_response
+        hab = round(amp / base, 4) if base not in (None, 0) else None
+        self._last_response = {
+            'response_amplitude': amp,
+            'baseline_response':  base,
+            'habituation_index':  hab,
+            'n_responses':        len(self._baseline_responses),
+        }
+        return dict(self._last_response)
 
     def vpattern_marker(self, v_prob: float, eeg_bands: Optional[dict] = None):
         """Auto-marker when V-pattern is detected by ML model."""
@@ -298,6 +377,8 @@ class ExperimentRunner:
             'n_markers':  len(self.markers),
             'n_manual':   n_manual,
             'n_vpattern': n_vpattern,
+            'baseline_response':     self._baseline_response,
+            'n_stimulus_responses':  len(self._baseline_responses),
         }
 
 

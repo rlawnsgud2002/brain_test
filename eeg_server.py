@@ -372,11 +372,18 @@ def bands_to_14ch(delta, theta, alpha, beta, gamma, noise=6.0):
     return vals
 
 # ── DEAP Source ───────────────────────────────────────────────────────────────
-async def _tick_experiment(ws, exp_holder, bands):
-    """Advance experiment timer; send transition/done immediately, progress every 1s."""
+async def _tick_experiment(ws, exp_holder, bands, frame=None):
+    """Advance experiment timer; send transition/done immediately, progress every 1s.
+
+    Also feeds beta history for habituation (Phase 2) and, when a stimulus response
+    completes, attaches response_amplitude / habituation_index to the given frame.
+    """
     runner = exp_holder[0]
     if runner is None or runner.done:
         return
+    resp = runner.push_signal(bands)
+    if resp and frame is not None:
+        frame.update(resp)
     status = runner.tick(bands)
     state  = status.get('state')
 
@@ -505,7 +512,7 @@ async def stream_deap(ws, dat_file, trial=0, speed=1.0, notch_hz=50, no_preproce
         if cal_holder:
             await _push_cal(ws, cal_holder, frame['bands'])
         if exp_holder:
-            await _tick_experiment(ws, exp_holder, frame['bands'])
+            await _tick_experiment(ws, exp_holder, frame['bands'], frame)
         try:
             await ws.send(json.dumps(frame))
             await asyncio.sleep(interval)
@@ -682,7 +689,7 @@ async def stream_mental(ws, csv_file, speed=1.0, detector=None, cal_holder=None,
         if cal_holder:
             await _push_cal(ws, cal_holder, frame['bands'])
         if exp_holder:
-            await _tick_experiment(ws, exp_holder, frame['bands'])
+            await _tick_experiment(ws, exp_holder, frame['bands'], frame)
 
         try:
             await ws.send(json.dumps(frame))
@@ -787,7 +794,7 @@ async def stream_sim(ws, detector=None, cal_holder=None, exp_holder=None):
         if cal_holder:
             await _push_cal(ws, cal_holder, bands)
         if exp_holder:
-            await _tick_experiment(ws, exp_holder, bands)
+            await _tick_experiment(ws, exp_holder, bands, frame)
         try:
             await ws.send(json.dumps(frame))
             await asyncio.sleep(0.1)
@@ -967,7 +974,7 @@ async def stream_emotiv(ws, detector=None, cal_holder=None, exp_holder=None):
                     if cal_holder:
                         await _push_cal(ws, cal_holder, frame['bands'])
                     if exp_holder:
-                        await _tick_experiment(ws, exp_holder, frame['bands'])
+                        await _tick_experiment(ws, exp_holder, frame['bands'], frame)
                     try:
                         await ws.send(json.dumps(frame))
                     except websockets.exceptions.ConnectionClosed:
@@ -1434,7 +1441,7 @@ async def stream_openbci(ws, board='ganglion', serial_port=None,
             if cal_holder:
                 await _push_cal(ws, cal_holder, bands_out)
             if exp_holder:
-                await _tick_experiment(ws, exp_holder, bands_out)
+                await _tick_experiment(ws, exp_holder, bands_out, frame)
             try:
                 await ws.send(json.dumps(frame))
             except websockets.exceptions.ConnectionClosed:

@@ -281,6 +281,76 @@ class TestPersistence:
             assert len(line.split(',')) == header_cols
 
 
+# ── Habituation / response_amplitude (Phase 2) ───────────────────────────────
+class TestHabituation:
+    def _one_response(self, runner, pre_beta, post_beta):
+        """Drive one full stimulus response with isolated pre/post beta."""
+        runner._beta_hist.clear()
+        runner.mark_stimulus({'beta': pre_beta})
+        # Force the post-stimulus window (0.5s) to have elapsed
+        runner._pending_resp['t0'] -= 1.0
+        return runner.push_signal({'beta': post_beta})
+
+    def test_push_signal_idle_returns_empty(self):
+        runner = ExperimentRunner(protocol='quick')
+        # Not started → no capture
+        assert runner.push_signal(_bands()) == {}
+
+    def test_response_amplitude_positive_when_beta_rises(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        resp = self._one_response(runner, pre_beta=40, post_beta=80)
+        assert 'response_amplitude' in resp
+        assert resp['response_amplitude'] == pytest.approx(40.0)
+
+    def test_response_amplitude_negative_when_beta_falls(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        resp = self._one_response(runner, pre_beta=80, post_beta=50)
+        assert resp['response_amplitude'] == pytest.approx(-30.0)
+
+    def test_stimulus_label_triggers_capture(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        runner.add_marker('stimulus-1', _bands())
+        assert runner._pending_resp is not None
+
+    def test_non_stimulus_label_no_capture(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        runner.add_marker('keypress', _bands())
+        assert runner._pending_resp is None
+
+    def test_first_response_is_its_own_baseline(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        r1 = self._one_response(runner, 40, 80)   # amp = 40
+        assert r1['baseline_response'] == r1['response_amplitude']
+        assert r1['habituation_index'] == pytest.approx(1.0)
+
+    def test_habituation_index_drops_with_weaker_response(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        self._one_response(runner, 40, 80)        # amp1 = 40, baseline = 40
+        r2 = self._one_response(runner, 40, 60)   # amp2 = 20, baseline = mean(40,20)=30
+        assert r2['habituation_index'] < 1.0
+        assert r2['n_responses'] == 2
+
+    def test_pending_cleared_after_finalize(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        self._one_response(runner, 40, 80)
+        assert runner._pending_resp is None
+
+    def test_summary_includes_habituation_keys(self):
+        runner = ExperimentRunner(protocol='quick')
+        runner.start()
+        self._one_response(runner, 40, 80)
+        s = runner._summary()
+        assert 'baseline_response' in s
+        assert s['n_stimulus_responses'] == 1
+
+
 # ── Phase sentinel ───────────────────────────────────────────────────────────
 class TestPhaseSentinel:
     def test_current_phase_after_done_does_not_crash(self):
