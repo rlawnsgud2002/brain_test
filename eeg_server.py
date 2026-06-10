@@ -1297,6 +1297,157 @@ async def stream_muse(ws, detector=None, cal_holder=None, exp_holder=None):
         await stream_sim(ws, detector=detector, cal_holder=cal_holder,
                          exp_holder=exp_holder)
 
+# ── OpenBCI — brainflow (Ganglion / Cyton) ────────────────────────────────────
+# Channel count, sample rate and FAA electrode pair per board. faa = (left, right)
+# indices into the EEG channel array (recommended montage frontal-first).
+OPENBCI_BOARDS = {
+    'ganglion': {'n_ch': 4, 'fs': 200, 'frontal_idx': [0, 1],       'faa': (2, 3)},
+    'cyton':    {'n_ch': 8, 'fs': 250, 'frontal_idx': [0, 1, 2, 3], 'faa': (2, 3)},
+}
+
+async def stream_openbci(ws, board='ganglion', serial_port=None,
+                         detector=None, cal_holder=None, exp_holder=None):
+    """
+    Streams live EEG from OpenBCI boards via the brainflow SDK.
+
+    Requirements: pip install brainflow
+
+    Boards:
+      ganglion : 4 channels @ 200 Hz  (recommended montage Fp1/Fp2/F3/F4)
+      cyton    : 8 channels @ 250 Hz  (Fp1/Fp2/F3/F4/F7/F8/T7/T8)
+
+    Setup:
+      Windows : --source openbci --board cyton --serial COM3
+      Linux   : --source openbci --board cyton --serial /dev/ttyUSB0
+      Ganglion uses a BLED112 BLE dongle on the same serial flag.
+
+    Mirrors the Muse/Emotiv pattern: on any connection error → simulation fallback.
+    """
+    cfg = OPENBCI_BOARDS.get(board)
+    if cfg is None:
+        await ws.send(json.dumps({'type': 'error',
+            'message': f"Unknown OpenBCI board '{board}'. Use: ganglion | cyton"}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
+        return
+
+    try:
+        from brainflow.board_shim import BoardShim, BrainFlowInputParams, BoardIds
+    except ImportError:
+        await ws.send(json.dumps({'type': 'error',
+            'message': 'brainflow not installed. Run: pip install brainflow'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
+        return
+
+    n_ch, fs = cfg['n_ch'], cfg['fs']
+    WIN = fs   # 1-second analysis window
+    board_id = BoardIds.GANGLION_BOARD if board == 'ganglion' else BoardIds.CYTON_BOARD
+    params = BrainFlowInputParams()
+    params.serial_port = serial_port or ''
+
+    print(f"[OPENBCI] Connecting {board} (n_ch={n_ch}, fs={fs}) on "
+          f"'{params.serial_port or '(auto)'}'")
+    await ws.send(json.dumps({'type': 'status',
+        'message': f'Connecting to OpenBCI {board}...', 'source': 'openbci'}))
+
+    bshim = None
+    def _cleanup():
+        if bshim is not None:
+            try:
+                bshim.stop_stream()
+                bshim.release_session()
+            except Exception:
+                pass
+
+    try:
+        bshim = BoardShim(board_id, params)
+        bshim.prepare_session()
+        bshim.start_stream()
+        eeg_idx = BoardShim.get_eeg_channels(board_id)[:n_ch]
+        await ws.send(json.dumps({'type': 'status',
+            'message': f'OpenBCI {board} connected @ {fs}Hz — streaming',
+            'source': 'openbci'}))
+        print(f"[OPENBCI] {board} streaming ({len(eeg_idx)} EEG channels)")
+
+        while True:
+            await asyncio.sleep(0.25)   # ~4 fps UI update
+            if bshim.get_board_data_count() < WIN:
+                continue
+            data = bshim.get_current_board_data(WIN)        # (rows, WIN)
+            eeg  = np.array([data[ci] for ci in eeg_idx])   # (n_ch, WIN)
+            if eeg.shape[1] < 13:                           # filtfilt padlen guard
+                continue
+
+            clean, artifacts = preprocess(eeg, fs=fs, notch_hz=50,
+                                          frontal_idx=cfg['frontal_idx'])
+            nch = clean.shape[0]
+            _bp = lambda pos, lo, hi: bandpower(clean[pos], fs, lo, hi)
+            g_delta = float(np.mean([_bp(i, 1, 4)   for i in range(nch)]))
+            g_theta = float(np.mean([_bp(i, 4, 8)   for i in range(nch)]))
+            g_alpha = float(np.mean([_bp(i, 8, 12)  for i in range(nch)]))
+            g_beta  = float(np.mean([_bp(i, 12, 30) for i in range(nch)]))
+            g_gamma = float(np.mean([_bp(i, 30, 45) for i in range(nch)]))
+            ei   = g_beta / max(g_alpha + g_theta, 1e-9)
+            conc = float(np.clip((ei - 0.3) * 60 + 50, 0, 100))
+            tot  = max(g_delta + g_theta + g_alpha + g_beta + g_gamma, 1e-9)
+
+            # FAA from the board's configured left/right frontal pair
+            fl = min(cfg['faa'][0], nch - 1)
+            fr = min(cfg['faa'][1], nch - 1)
+            a_l = bandpower(clean[fl], fs, 8, 12)
+            a_r = bandpower(clean[fr], fs, 8, 12)
+            faa = float(np.clip((a_r - a_l) / (a_r + a_l + 1e-9), -1, 1))
+
+            bands_out = {
+                'delta': round(g_delta / tot * 100, 2),
+                'theta': round(g_theta / tot * 100, 2),
+                'alpha': round(g_alpha / tot * 100, 2),
+                'beta':  round(g_beta  / tot * 100, 2),
+                'gamma': round(g_gamma / tot * 100, 2),
+                'concentration':    round(conc, 2),
+                'engagement_index': round(ei, 4),
+                'faa':              round(faa, 4),
+            }
+            channels = []
+            for pos in range(nch):
+                ch_conc = float(np.clip(
+                    (bandpower(clean[pos], fs, 12, 30) /
+                     (bandpower(clean[pos], fs, 8, 12) + 1e-9) - 0.3) * 40 + 50, 0, 100))
+                channels.append(round(ch_conc, 2))
+
+            cq = channel_quality(clean)
+            quality = signal_quality_scalar(cq, rejected_ratio=artifacts.get('rejected_ratio', 0.0))
+
+            vdet = detector
+            v_result = vdet.push(conc) if vdet else {'v_prob': 0.0, 'v_active': False}
+
+            frame = {
+                'type': 'eeg',
+                'channels': channels,
+                'bands': bands_out,
+                'contact_quality': cq,
+                'quality': quality,
+                'artifacts': artifacts,
+                'vpattern': v_result,
+                'source': 'openbci',
+            }
+            update_state(channels, bands_out)
+            if cal_holder:
+                await _push_cal(ws, cal_holder, bands_out)
+            if exp_holder:
+                await _tick_experiment(ws, exp_holder, bands_out)
+            try:
+                await ws.send(json.dumps(frame))
+            except websockets.exceptions.ConnectionClosed:
+                break
+        _cleanup()
+
+    except Exception as e:
+        _cleanup()
+        print(f"[OPENBCI] Error: {e}")
+        await ws.send(json.dumps({'type': 'error',
+            'message': f'OpenBCI error: {e}. Falling back to simulation.'}))
+        await stream_sim(ws, detector=detector, cal_holder=cal_holder, exp_holder=exp_holder)
+
 # ── Settings + Calibration + Experiment receiver ──────────────────────────────
 def _make_recv(ws, calibrator_holder, exp_holder):
     """
@@ -1495,6 +1646,11 @@ def make_handler(source, dat_file, trial, speed,
                 await stream_tgam(ws, serial_port=STATE.get('serial_port'),
                                   detector=detector, cal_holder=calibrator_holder,
                                   exp_holder=exp_holder)
+            elif source == 'openbci':
+                await stream_openbci(ws, board=STATE.get('openbci_board', 'ganglion'),
+                                     serial_port=STATE.get('serial_port'),
+                                     detector=detector, cal_holder=calibrator_holder,
+                                     exp_holder=exp_holder)
             elif source == 'sim':
                 await stream_sim(ws, detector=detector, cal_holder=calibrator_holder,
                                  exp_holder=exp_holder)
@@ -1503,7 +1659,7 @@ def make_handler(source, dat_file, trial, speed,
                 # avoids user confusion ("why am I getting fake data?")
                 try:
                     await ws.send(json.dumps({'type': 'error',
-                        'message': f"Unknown source '{source}'. Valid: sim, deap, mental, emotiv, muse, tgam"}))
+                        'message': f"Unknown source '{source}'. Valid: sim, deap, mental, emotiv, muse, tgam, openbci"}))
                 except websockets.exceptions.ConnectionClosed:
                     pass
         except Exception as e:
@@ -1530,10 +1686,12 @@ def main():
         sys.exit(1)
     parser = argparse.ArgumentParser(
         description='EEG WebSocket Server — Brain Concentration Visualization')
-    parser.add_argument('--source', choices=['sim','deap','mental','emotiv','muse','tgam'],
+    parser.add_argument('--source', choices=['sim','deap','mental','emotiv','muse','tgam','openbci'],
                         default='sim', help='Data source')
-    parser.add_argument('--serial-port', default=None,
-                        help='Serial port for TGAM (e.g. COM3 / /dev/ttyUSB0)')
+    parser.add_argument('--serial-port', '--serial', dest='serial_port', default=None,
+                        help='Serial port for TGAM/OpenBCI (e.g. COM3 / /dev/ttyUSB0)')
+    parser.add_argument('--board', choices=['ganglion','cyton'], default='ganglion',
+                        help='OpenBCI board type (used with --source openbci)')
     parser.add_argument('--file',  default=None, help='Data file path')
     parser.add_argument('--trial', type=int,   default=0,   help='DEAP trial index (0-39)')
     parser.add_argument('--speed', type=float, default=1.0, help='Playback speed multiplier (>0)')
@@ -1556,7 +1714,7 @@ def main():
     if not (1 <= args.port <= 65535):
         parser.error(f"--port must be 1-65535 (got {args.port})")
 
-    if not NUMPY_OK and args.source in ('deap','mental'):
+    if not NUMPY_OK and args.source in ('deap','mental','openbci'):
         print("[ERROR] numpy/scipy required. pip install numpy scipy")
         return
     if not PANDAS_OK and args.source == 'mental':
@@ -1565,6 +1723,7 @@ def main():
 
     if args.serial_port:
         STATE['serial_port'] = args.serial_port
+    STATE['openbci_board'] = args.board
     if args.emotiv_id:
         STATE['emotiv_client_id']  = args.emotiv_id
     if args.emotiv_secret:
@@ -1600,6 +1759,11 @@ def main():
         print(f" NOTE: TGAM serial port: {port}")
         print("       pip install pyserial")
         print("       Windows: --serial-port COM3 | Linux: --serial-port /dev/ttyUSB0")
+    if args.source == 'openbci':
+        port = args.serial_port or '(auto)'
+        print(f" NOTE: OpenBCI board={args.board}  serial={port}")
+        print("       pip install brainflow")
+        print("       Windows: --serial COM3 | Linux: --serial /dev/ttyUSB0")
     print(" Open mockup_3d.html in browser")
     print(" Press Ctrl+C to stop")
     print("=" * 60)

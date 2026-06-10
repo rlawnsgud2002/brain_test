@@ -10,6 +10,8 @@ Tests pure functions (not WebSocket coroutines):
 """
 import sys
 import math
+import json
+import asyncio
 import pytest
 import numpy as np
 
@@ -564,3 +566,53 @@ class TestSentCounterIndependence:
         assert timestamps == [0.0, 0.5, 1.0]
         # Progresses reflect actual file position (with gaps)
         assert progresses == [0.2, 0.6, 1.0]
+
+
+# ── OpenBCI (brainflow) connector ─────────────────────────────────────────────
+class _CollectWS:
+    """Minimal fake WebSocket that records JSON messages sent to it."""
+    def __init__(self):
+        self.sent = []
+    async def send(self, m):
+        self.sent.append(json.loads(m))
+
+
+class TestOpenBCIConfig:
+    def test_ganglion_4ch_200hz(self):
+        c = eeg_server.OPENBCI_BOARDS['ganglion']
+        assert c['n_ch'] == 4 and c['fs'] == 200
+
+    def test_cyton_8ch_250hz(self):
+        c = eeg_server.OPENBCI_BOARDS['cyton']
+        assert c['n_ch'] == 8 and c['fs'] == 250
+
+    def test_faa_indices_within_channel_count(self):
+        for name, c in eeg_server.OPENBCI_BOARDS.items():
+            l, r = c['faa']
+            assert 0 <= l < c['n_ch'], f"{name} faa-left out of range"
+            assert 0 <= r < c['n_ch'], f"{name} faa-right out of range"
+
+
+class TestOpenBCIFallback:
+    """stream_openbci must fall back to simulation on any error, like Muse/Emotiv."""
+
+    def _run(self, monkeypatch, **kwargs):
+        called = []
+        async def fake_sim(ws, **kw):
+            called.append(True)
+        monkeypatch.setattr(eeg_server, 'stream_sim', fake_sim)
+        ws = _CollectWS()
+        asyncio.run(eeg_server.stream_openbci(ws, **kwargs))
+        return ws, called
+
+    def test_unknown_board_falls_back_to_sim(self, monkeypatch):
+        ws, called = self._run(monkeypatch, board='nonexistent')
+        assert called, "unknown board should fall back to sim"
+        assert any('Unknown OpenBCI board' in m.get('message', '') for m in ws.sent)
+
+    def test_missing_brainflow_or_no_device_falls_back(self, monkeypatch):
+        # brainflow absent in this env → ImportError branch; if it were present, a
+        # connection error — either way it must fall back to sim and emit a message.
+        ws, called = self._run(monkeypatch, board='ganglion')
+        assert called, "missing device should fall back to sim"
+        assert any(m.get('type') in ('error', 'status') for m in ws.sent)
